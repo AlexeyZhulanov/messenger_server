@@ -1,4 +1,5 @@
 from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy.sql import func
 
 db = SQLAlchemy()
 
@@ -27,6 +28,8 @@ class Message(db.Model):
     voice = db.Column(db.String)
     file = db.Column(db.String)
     is_read = db.Column(db.Boolean, default=False)
+    is_edited = db.Column(db.Boolean, default=False)
+    timestamp = db.Column(db.DateTime, server_default=func.now())
 
 
 class Group(db.Model):

@@ -55,3 +55,134 @@ def get_dialogs():
         return jsonify({"error": str(e)}), 400
     except Exception as e:
         return jsonify({"error": "An error occurred while processing your request"}), 500
+
+
+@messages_bp.route('/messages', methods=['POST'])
+@jwt_required()
+def send_message():
+    try:
+        data = request.get_json()
+        id_dialog = data.get('id_dialog')
+        id_sender = get_jwt_identity()
+        text = data.get('text')
+        images = data.get('images')
+        voice = data.get('voice')
+        file = data.get('file')
+
+        message = Message(
+            id_dialog=id_dialog,
+            id_sender=id_sender,
+            text=text,
+            images=images,
+            voice=voice,
+            file=file,
+            is_edited=False
+        )
+        db.session.add(message)
+        db.session.commit()
+        return jsonify({"message": "Message sent successfully"}), 201
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@messages_bp.route('/messages', methods=['GET'])
+@jwt_required()
+def get_messages():
+    try:
+        id_dialog = request.args.get('id_dialog')
+        messages = Message.query.filter_by(id_dialog=id_dialog).all()
+        messages_data = [{"id": msg.id, "text": msg.text, "images": msg.images, "voice": msg.voice, "file": msg.file,
+                          "is_read": msg.is_read, "is_edited": msg.is_edited} for msg in messages]
+        return jsonify(messages_data), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@messages_bp.route('/dialogs/<int:dialog_id>/key', methods=['PUT'])
+@jwt_required()
+def add_key_to_dialog(dialog_id):
+    try:
+        dialog = Dialog.query.get(dialog_id)
+        if not dialog:
+            return jsonify({"error": "Dialog not found"}), 404
+
+        data = request.get_json()
+        key = data.get('key')
+        if not key:
+            return jsonify({"error": "No key provided"}), 400
+
+        dialog.key = key
+        db.session.commit()
+        return jsonify({"message": "Key added to dialog"}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@messages_bp.route('/dialogs/<int:dialog_id>/key', methods=['DELETE'])
+@jwt_required()
+def remove_key_from_dialog(dialog_id):
+    try:
+        dialog = Dialog.query.get(dialog_id)
+        if not dialog:
+            return jsonify({"error": "Dialog not found"}), 404
+
+        dialog.key = None
+        db.session.commit()
+        return jsonify({"message": "Key removed from dialog"}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@messages_bp.route('/messages/<int:message_id>', methods=['PUT'])
+@jwt_required()
+def edit_message(message_id):
+    try:
+        data = request.get_json()
+        message = Message.query.get(message_id)
+        if not message:
+            return jsonify({'message': 'Message not found'}), 404
+
+        if 'text' in data:
+            message.text = data['text']
+            message.is_edited = True
+        if 'images' in data:
+            message.images = data['images']
+        if 'voice' in data:
+            message.voice = data['voice']
+        if 'file' in data:
+            message.file = data['file']
+
+        db.session.commit()
+        return jsonify({'message': 'Message updated successfully'}), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@messages_bp.route('/messages/<int:message_id>', methods=['DELETE'])
+@jwt_required()
+def delete_message(message_id):
+    try:
+        message = Message.query.get(message_id)
+        if not message:
+            return jsonify({"error": "Message not found"}), 404
+
+        db.session.delete(message)
+        db.session.commit()
+        return jsonify({"message": "Message deleted successfully"}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@messages_bp.route('/dialogs/<int:dialog_id>', methods=['DELETE'])
+@jwt_required()
+def delete_dialog(dialog_id):
+    try:
+        dialog = Dialog.query.get(dialog_id)
+        if not dialog:
+            return jsonify({"error": "Dialog not found"}), 404
+
+        db.session.delete(dialog)
+        db.session.commit()
+        return jsonify({"message": "Dialog deleted successfully"}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
