@@ -1,0 +1,6 @@
+Flask
+Flask-SQLAlchemy
+Flask-Bcrypt
+Flask-JWT-Extended
+werkzeug
+sqlalchemy
