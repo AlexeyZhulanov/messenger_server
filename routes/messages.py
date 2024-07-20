@@ -186,3 +186,22 @@ def delete_dialog(dialog_id):
         return jsonify({"message": "Dialog deleted successfully"}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+@messages_bp.route('/users', methods=['GET'])
+@jwt_required()
+def get_users():
+    try:
+        user_id = get_jwt_identity()
+
+        # Получить список пользователей, с которыми есть диалоги
+        dialogs = Dialog.query.filter((Dialog.id_user1 == user_id) | (Dialog.id_user2 == user_id)).all()
+        dialog_user_ids = {d.id_user1 if d.id_user1 != user_id else d.id_user2 for d in dialogs}
+
+        # Получить всех пользователей, кроме текущего пользователя и пользователей, с которыми есть диалоги
+        users = User.query.filter(User.id != user_id, User.id.notin_(dialog_user_ids)).all()
+        user_list = [{'id': user.id, 'name': user.name} for user in users]
+
+        return jsonify(user_list), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
