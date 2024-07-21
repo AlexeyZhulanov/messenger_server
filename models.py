@@ -46,6 +46,7 @@ class Group(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(50), nullable=False)
     created_by = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    avatar = db.Column(db.String(256))
 
     members = db.relationship('GroupMember', backref='group', lazy=True)
     messages = db.relationship('GroupMessage', backref='group', lazy=True)

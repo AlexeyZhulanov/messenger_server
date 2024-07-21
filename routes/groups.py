@@ -212,3 +212,58 @@ def get_group_members(group_id):
         return jsonify(member_list), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+@groups_bp.route('/my_groups', methods=['GET'])
+@jwt_required()
+def get_my_groups():
+    user_id = get_jwt_identity()
+    try:
+        group_memberships = GroupMember.query.filter_by(user_id=user_id).all()
+        group_ids = [membership.group_id for membership in group_memberships]
+
+        groups = Group.query.filter(Group.id.in_(group_ids)).all()
+
+        group_list = []
+        for group in groups:
+            last_message = GroupMessage.query.filter_by(group_id=group.id).order_by(GroupMessage.timestamp.desc()).first()
+            group_data = {
+                "id": group.id,
+                "name": group.name,
+                "created_by": group.created_by,
+                "avatar": group.avatar,
+                "last_message": {
+                    "text": last_message.text if last_message else None,
+                    "timestamp": last_message.timestamp if last_message else None,
+                    "is_read": last_message.is_read if last_message else None
+                }
+            }
+            group_list.append(group_data)
+
+        return jsonify(group_list), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@groups_bp.route('/groups/<int:group_id>/avatar', methods=['PUT'])
+@jwt_required()
+def update_group_avatar(group_id):
+    try:
+        user_id = get_jwt_identity()
+        group = Group.query.get(group_id)
+        if not group:
+            return jsonify({"error": "Group not found"}), 404
+
+        if group.created_by != user_id:
+            return jsonify({"error": "Only the creator of the group can update the avatar"}), 403
+
+        data = request.get_json()
+        new_avatar = data.get('avatar')
+        if not new_avatar:
+            return jsonify({"error": "No avatar provided"}), 400
+
+        group.avatar = new_avatar
+        db.session.commit()
+        return jsonify({"message": "Group avatar updated successfully"}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500

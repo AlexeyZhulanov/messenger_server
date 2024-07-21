@@ -34,7 +34,6 @@ def create_dialog():
     return jsonify({'message': 'Dialog created successfully'}), 201
 
 
-
 @messages_bp.route('/dialogs', methods=['GET'])
 @jwt_required()
 def get_dialogs():
@@ -58,11 +57,14 @@ def get_dialogs():
                 "key": dialog.key,
                 "other_user": {
                     "id": other_user.id,
-                    "name": other_user.name
+                    "name": other_user.name,
+                    "username": other_user.username,
+                    "avatar": other_user.avatar
                 },
                 "last_message": {
                     "text": last_message.text if last_message else None,
-                    "timestamp": last_message.timestamp if last_message else None
+                    "timestamp": last_message.timestamp if last_message else None,
+                    "is_read": last_message.is_read if last_message else None
                 }
             }
             dialog_list.append(dialog_data)
@@ -71,7 +73,6 @@ def get_dialogs():
     except NoSuchColumnError as e:
         return jsonify({"error": str(e)}), 400
     except Exception as e:
-        # Логирование сообщения об ошибке
         return jsonify({"error": str(e)}), 500
 
 
