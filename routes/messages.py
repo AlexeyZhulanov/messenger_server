@@ -12,11 +12,11 @@ messages_bp = Blueprint('messages', __name__)
 def create_dialog():
     user_id = get_jwt_identity()
     data = request.get_json()
-    other_user = User.query.filter_by(username=data['username']).first()
+    other_user = User.query.filter_by(name=data['name']).first()
     if not other_user:
         return jsonify({'message': 'User not found'}), 404
 
-    new_dialog = Dialog(user1_id=user_id, user2_id=other_user.id)
+    new_dialog = Dialog(id_user1=user_id, id_user2=other_user.id)
     db.session.add(new_dialog)
     db.session.commit()
     return jsonify({'message': 'Dialog created successfully'}), 201
@@ -28,33 +28,37 @@ def get_dialogs():
     user_id = get_jwt_identity()
     try:
         # Проверяем наличие атрибутов в модели
-        if not hasattr(Dialog, 'user1_id') or not hasattr(Dialog, 'user2_id'):
+        if not hasattr(Dialog, 'id_user1') or not hasattr(Dialog, 'id_user2'):
             return jsonify(
-                {"error": "The 'Dialog' model does not have required attributes 'user1_id' and 'user2_id'"}), 400
+                {"error": "The 'Dialog' model does not have required attributes 'id_user1' and 'id_user2'"}), 400
 
-        dialogs = Dialog.query.filter((Dialog.user1_id == user_id) | (Dialog.user2_id == user_id)).all()
+        dialogs = Dialog.query.filter((Dialog.id_user1 == user_id) | (Dialog.id_user2 == user_id)).all()
 
         dialog_list = []
         for dialog in dialogs:
-            other_user_id = dialog.user1_id if dialog.user1_id != user_id else dialog.user2_id
+            other_user_id = dialog.id_user1 if dialog.id_user1 != user_id else dialog.id_user2
             other_user = User.query.get(other_user_id)
-            last_message = Message.query.filter_by(dialog_id=dialog.id).order_by(Message.timestamp.desc()).first()
-            dialog_list.append({
+            last_message = Message.query.filter_by(id_dialog=dialog.id).order_by(Message.timestamp.desc()).first()
+
+            dialog_data = {
                 "dialog_id": dialog.id,
                 "other_user": {
                     "id": other_user.id,
                     "name": other_user.name
                 },
                 "last_message": {
-                    "text": last_message.text,
-                    "timestamp": last_message.timestamp
+                    "text": last_message.text if last_message else None,
+                    "timestamp": last_message.timestamp if last_message else None
                 }
-            })
+            }
+            dialog_list.append(dialog_data)
+
         return jsonify(dialog_list), 200
     except NoSuchColumnError as e:
         return jsonify({"error": str(e)}), 400
     except Exception as e:
-        return jsonify({"error": "An error occurred while processing your request"}), 500
+        # Логирование сообщения об ошибке
+        return jsonify({"error": str(e)}), 500
 
 
 @messages_bp.route('/messages', methods=['POST'])
@@ -91,8 +95,8 @@ def get_messages():
     try:
         id_dialog = request.args.get('id_dialog')
         messages = Message.query.filter_by(id_dialog=id_dialog).all()
-        messages_data = [{"id": msg.id, "text": msg.text, "images": msg.images, "voice": msg.voice, "file": msg.file,
-                          "is_read": msg.is_read, "is_edited": msg.is_edited} for msg in messages]
+        messages_data = [{"id": msg.id, "id_sender": msg.id_sender, "text": msg.text, "images": msg.images, "voice": msg.voice, "file": msg.file,
+                          "is_read": msg.is_read, "is_edited": msg.is_edited, "timestamp": msg.timestamp} for msg in messages]
         return jsonify(messages_data), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500

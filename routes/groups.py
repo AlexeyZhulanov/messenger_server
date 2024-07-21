@@ -11,7 +11,7 @@ def create_group():
     try:
         user_id = get_jwt_identity()
         data = request.get_json()
-        new_group = Group(name=data['name'], creator_id=user_id)
+        new_group = Group(name=data['name'], created_by=user_id)
         db.session.add(new_group)
         db.session.commit()
         return jsonify({'message': 'Group created successfully'}), 201
@@ -25,7 +25,7 @@ def send_group_message(group_id):
     try:
         user_id = get_jwt_identity()
         data = request.get_json()
-        new_message = GroupMessage(group_id=group_id, sender_id=user_id, text=data['text'])
+        new_message = GroupMessage(group_id=group_id, id_sender=user_id, text=data['text'])
         db.session.add(new_message)
         db.session.commit()
         return jsonify({'message': 'Message sent successfully'}), 201
@@ -38,7 +38,7 @@ def send_group_message(group_id):
 def get_group_messages(group_id):
     try:
         messages = GroupMessage.query.filter_by(group_id=group_id).order_by(GroupMessage.timestamp.asc()).all()
-        message_list = [{'text': msg.text, 'timestamp': msg.timestamp, 'sender_id': msg.sender_id} for msg in messages]
+        message_list = [{'text': msg.text, 'timestamp': msg.timestamp, 'id_sender': msg.id_sender} for msg in messages]
         return jsonify(message_list), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -124,7 +124,7 @@ def add_user_to_group(group_id):
 
         # Проверка, что текущий пользователь является создателем группы
         group = Group.query.get(group_id)
-        if group.creator_id != user_id:
+        if group.created_by != user_id:
             return jsonify({'message': 'Only the creator can add members'}), 403
 
         # Проверка, что пользователя еще нет в группе
@@ -147,7 +147,7 @@ def remove_user_from_group(group_id, user_id):
 
         # Проверка, что текущий пользователь является создателем группы
         group = Group.query.get(group_id)
-        if group.creator_id != current_user_id:
+        if group.created_by != current_user_id:
             return jsonify({'message': 'Only the creator can remove members'}), 403
 
         member = GroupMember.query.filter_by(group_id=group_id, user_id=user_id).first()
@@ -165,10 +165,12 @@ def remove_user_from_group(group_id, user_id):
 @jwt_required()
 def get_available_users_for_group(group_id):
     try:
+        user_id = get_jwt_identity()
+
         group_members = GroupMember.query.filter_by(group_id=group_id).all()
         member_ids = {member.user_id for member in group_members}
 
-        available_users = User.query.filter(User.id.notin_(member_ids)).all()
+        available_users = User.query.filter(User.id.notin_(member_ids), User.id != user_id).all()
         user_list = [{'id': user.id, 'name': user.name} for user in available_users]
 
         return jsonify(user_list), 200
