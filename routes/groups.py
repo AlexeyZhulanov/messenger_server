@@ -11,11 +11,20 @@ def create_group():
     try:
         user_id = get_jwt_identity()
         data = request.get_json()
+
+        # Создание новой группы
         new_group = Group(name=data['name'], created_by=user_id)
         db.session.add(new_group)
+        db.session.flush()  # Используем flush для получения ID новой группы
+
+        # Добавление создателя группы как её члена
+        new_member = GroupMember(group_id=new_group.id, user_id=user_id)
+        db.session.add(new_member)
+
         db.session.commit()
-        return jsonify({'message': 'Group created successfully'}), 201
+        return jsonify({'message': 'Group created and user added successfully'}), 201
     except Exception as e:
+        db.session.rollback()  # Откат транзакции в случае ошибки
         return jsonify({'error': str(e)}), 500
 
 
@@ -67,7 +76,6 @@ def edit_group_message(group_message_id):
         return jsonify({"error": str(e)}), 500
 
 
-
 @groups_bp.route('/group_messages/<int:group_message_id>', methods=['DELETE'])
 @jwt_required()
 def delete_group_message(group_message_id):
@@ -87,9 +95,14 @@ def delete_group_message(group_message_id):
 @jwt_required()
 def delete_group(group_id):
     try:
+        user_id = get_jwt_identity()
         group = Group.query.get(group_id)
+
         if not group:
             return jsonify({"error": "Group not found"}), 404
+
+        if group.created_by != user_id:
+            return jsonify({"error": "Only the creator of the group can delete it"}), 403
 
         db.session.delete(group)
         db.session.commit()
@@ -178,5 +191,24 @@ def get_available_users_for_group(group_id):
         user_list = [{'id': user.id, 'name': user.name} for user in available_users]
 
         return jsonify(user_list), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@groups_bp.route('/groups/<int:group_id>/members', methods=['GET'])
+@jwt_required()
+def get_group_members(group_id):
+    try:
+        group = Group.query.get(group_id)
+        if not group:
+            return jsonify({"error": "Group not found"}), 404
+
+        group_members = GroupMember.query.filter_by(group_id=group_id).all()
+        member_ids = [member.user_id for member in group_members]
+
+        members = User.query.filter(User.id.in_(member_ids)).all()
+        member_list = [{'id': member.id, 'name': member.name, 'username': member.username, 'avatar': member.avatar} for member in members]
+
+        return jsonify(member_list), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500

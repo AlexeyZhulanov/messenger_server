@@ -109,7 +109,7 @@ def get_messages():
     try:
         id_dialog = request.args.get('id_dialog')
         messages = Message.query.filter_by(id_dialog=id_dialog).all()
-        messages_data = [{"id": msg.id, "id_sender": msg.id_sender, "text": msg.text, "images": msg.images, "voice": msg.voice, "file": msg.file,
+        messages_data = [{"id": msg.id, "id_sender": msg.id_sender, "id_dialog": msg.id_dialog, "text": msg.text, "images": msg.images, "voice": msg.voice, "file": msg.file,
                           "is_read": msg.is_read, "is_edited": msg.is_edited, "timestamp": msg.timestamp} for msg in messages]
         return jsonify(messages_data), 200
     except Exception as e:
@@ -238,6 +238,10 @@ def mark_message_as_read(message_id):
         if not message:
             return jsonify({"error": "Message not found"}), 404
 
+        # Проверяем, что текущий пользователь не является отправителем сообщения
+        if message.id_sender == user_id:
+            return jsonify({"error": "Sender cannot mark their own message as read"}), 400
+
         # Проверяем, что сообщение относится к диалогу, в котором участвует текущий пользователь
         dialog = Dialog.query.get(message.id_dialog)
         if not dialog or (dialog.id_user1 != user_id and dialog.id_user2 != user_id):
@@ -248,3 +252,26 @@ def mark_message_as_read(message_id):
         return jsonify({"message": "Message marked as read"}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+@messages_bp.route('/dialogs/<int:dialog_id>/messages/search', methods=['GET'])
+@jwt_required()
+def search_messages_in_dialog(dialog_id):
+    user_id = get_jwt_identity()
+    search_text = request.args.get('q', '')
+
+    if not search_text:
+        return jsonify({"error": "Search text must be provided"}), 400
+
+    dialog = Dialog.query.get(dialog_id)
+    if not dialog:
+        return jsonify({"error": "Dialog not found"}), 404
+
+    if dialog.id_user1 != user_id and dialog.id_user2 != user_id:
+        return jsonify({"error": "You are not a participant of this dialog"}), 403
+
+    messages = Message.query.filter(Message.id_dialog == dialog_id, Message.text.ilike(f'%{search_text}%')).all()
+
+    message_list = [{'id': message.id, 'id_sender': message.id_sender, 'text': message.text, 'timestamp': message.timestamp} for message in messages]
+
+    return jsonify(message_list), 200

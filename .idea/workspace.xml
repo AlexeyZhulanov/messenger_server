@@ -4,7 +4,7 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="1f77eedd-6591-4501-b419-726123b82c25" name="Changes" comment="fix some queries">
+    <list default="true" id="1f77eedd-6591-4501-b419-726123b82c25" name="Changes" comment="fix fix...">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/routes/groups.py" beforeDir="false" afterPath="$PROJECT_DIR$/routes/groups.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/routes/messages.py" beforeDir="false" afterPath="$PROJECT_DIR$/routes/messages.py" afterDir="false" />
@@ -121,7 +121,7 @@
       <workItem from="1721405608547" duration="497000" />
       <workItem from="1721417877809" duration="5547000" />
       <workItem from="1721509803955" duration="1453000" />
-      <workItem from="1721566451607" duration="9873000" />
+      <workItem from="1721566451607" duration="13315000" />
     </task>
     <task id="LOCAL-00001" summary="mega grill">
       <option name="closed" value="true" />
@@ -155,7 +155,15 @@
       <option name="project" value="LOCAL" />
       <updated>1721572847724</updated>
     </task>
-    <option name="localTasksCounter" value="5" />
+    <task id="LOCAL-00005" summary="fix fix...">
+      <option name="closed" value="true" />
+      <created>1721578062182</created>
+      <option name="number" value="00005" />
+      <option name="presentableId" value="LOCAL-00005" />
+      <option name="project" value="LOCAL" />
+      <updated>1721578062182</updated>
+    </task>
+    <option name="localTasksCounter" value="6" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -177,6 +185,7 @@
     <MESSAGE value="in progress" />
     <MESSAGE value="add some queries" />
     <MESSAGE value="fix some queries" />
-    <option name="LAST_COMMIT_MESSAGE" value="fix some queries" />
+    <MESSAGE value="fix fix..." />
+    <option name="LAST_COMMIT_MESSAGE" value="fix fix..." />
   </component>
 </project>
