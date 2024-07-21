@@ -48,9 +48,12 @@ def get_group_messages(group_id):
 @jwt_required()
 def edit_group_message(group_message_id):
     try:
+        user_id = get_jwt_identity()
         group_message = GroupMessage.query.get(group_message_id)
         if not group_message:
             return jsonify({"error": "Group message not found"}), 404
+        if group_message.id_sender != user_id:
+            return jsonify({'message': 'You can only edit your own messages'}), 403
 
         data = request.get_json()
         new_text = data.get('text')
@@ -62,6 +65,7 @@ def edit_group_message(group_message_id):
         return jsonify({"message": "Group message edited successfully"}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
 
 
 @groups_bp.route('/group_messages/<int:group_message_id>', methods=['DELETE'])

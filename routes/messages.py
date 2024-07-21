@@ -13,13 +13,26 @@ def create_dialog():
     user_id = get_jwt_identity()
     data = request.get_json()
     other_user = User.query.filter_by(name=data['name']).first()
+
     if not other_user:
         return jsonify({'message': 'User not found'}), 404
 
+    # Проверка на существование диалога
+    existing_dialog = Dialog.query.filter(
+        ((Dialog.id_user1 == user_id) & (Dialog.id_user2 == other_user.id)) |
+        ((Dialog.id_user1 == other_user.id) & (Dialog.id_user2 == user_id))
+    ).first()
+
+    if existing_dialog:
+        return jsonify({'message': 'Dialog already exists'}), 409
+
+    # Создание нового диалога
     new_dialog = Dialog(id_user1=user_id, id_user2=other_user.id)
     db.session.add(new_dialog)
     db.session.commit()
+
     return jsonify({'message': 'Dialog created successfully'}), 201
+
 
 
 @messages_bp.route('/dialogs', methods=['GET'])
@@ -42,6 +55,7 @@ def get_dialogs():
 
             dialog_data = {
                 "dialog_id": dialog.id,
+                "key": dialog.key,
                 "other_user": {
                     "id": other_user.id,
                     "name": other_user.name
@@ -141,11 +155,14 @@ def remove_key_from_dialog(dialog_id):
 @jwt_required()
 def edit_message(message_id):
     try:
-        data = request.get_json()
+        user_id = get_jwt_identity()
         message = Message.query.get(message_id)
         if not message:
             return jsonify({'message': 'Message not found'}), 404
+        if message.id_sender != user_id:
+            return jsonify({'message': 'You can only edit your own messages'}), 403
 
+        data = request.get_json()
         if 'text' in data:
             message.text = data['text']
             message.is_edited = True
@@ -209,3 +226,25 @@ def get_users():
         return jsonify(user_list), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+@messages_bp.route('/messages/<int:message_id>/read', methods=['PUT'])
+@jwt_required()
+def mark_message_as_read(message_id):
+    try:
+        user_id = get_jwt_identity()
+        message = Message.query.get(message_id)
+
+        if not message:
+            return jsonify({"error": "Message not found"}), 404
+
+        # Проверяем, что сообщение относится к диалогу, в котором участвует текущий пользователь
+        dialog = Dialog.query.get(message.id_dialog)
+        if not dialog or (dialog.id_user1 != user_id and dialog.id_user2 != user_id):
+            return jsonify({"error": "Unauthorized to mark this message as read"}), 403
+
+        message.is_read = True
+        db.session.commit()
+        return jsonify({"message": "Message marked as read"}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
