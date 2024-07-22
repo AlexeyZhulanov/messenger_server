@@ -4,9 +4,8 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="1f77eedd-6591-4501-b419-726123b82c25" name="Changes" comment="mega grill x2">
+    <list default="true" id="1f77eedd-6591-4501-b419-726123b82c25" name="Changes" comment="mega grill x3">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/routes/auth.py" beforeDir="false" afterPath="$PROJECT_DIR$/routes/auth.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/routes/groups.py" beforeDir="false" afterPath="$PROJECT_DIR$/routes/groups.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/routes/messages.py" beforeDir="false" afterPath="$PROJECT_DIR$/routes/messages.py" afterDir="false" />
     </list>
@@ -123,7 +122,7 @@
       <workItem from="1721417877809" duration="5547000" />
       <workItem from="1721509803955" duration="1453000" />
       <workItem from="1721566451607" duration="14614000" />
-      <workItem from="1721647572815" duration="16269000" />
+      <workItem from="1721647572815" duration="16659000" />
     </task>
     <task id="LOCAL-00001" summary="mega grill">
       <option name="closed" value="true" />
@@ -189,7 +188,15 @@
       <option name="project" value="LOCAL" />
       <updated>1721665519142</updated>
     </task>
-    <option name="localTasksCounter" value="9" />
+    <task id="LOCAL-00009" summary="mega grill x3">
+      <option name="closed" value="true" />
+      <created>1721677049380</created>
+      <option name="number" value="00009" />
+      <option name="presentableId" value="LOCAL-00009" />
+      <option name="project" value="LOCAL" />
+      <updated>1721677049380</updated>
+    </task>
+    <option name="localTasksCounter" value="10" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -215,6 +222,7 @@
     <MESSAGE value="add queries..." />
     <MESSAGE value="the final is close" />
     <MESSAGE value="mega grill x2" />
-    <option name="LAST_COMMIT_MESSAGE" value="mega grill x2" />
+    <MESSAGE value="mega grill x3" />
+    <option name="LAST_COMMIT_MESSAGE" value="mega grill x3" />
   </component>
 </project>

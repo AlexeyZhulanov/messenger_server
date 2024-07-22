@@ -68,6 +68,7 @@ def send_group_message():
         )
         db.session.add(message)
         db.session.commit()
+        increment_message_count(group_id=group.id)
 
         return jsonify({"message": "Message added successfully"}), 201
     except Exception as e:
@@ -189,6 +190,7 @@ def delete_group_messages():
             db.session.delete(message)
 
         db.session.commit()
+        decrement_message_count(group_id=group_id, count=len(messages))
         return jsonify({"message": "Messages deleted successfully"}), 200
     except Exception as e:
         db.session.rollback()  # Откат транзакции в случае ошибки
@@ -320,38 +322,6 @@ def get_group_members(group_id):
         return jsonify(member_list), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500
-
-
-# @groups_bp.route('/my_groups', methods=['GET'])
-# @jwt_required()
-# def get_my_groups():
-#     user_id = get_jwt_identity()
-#     try:
-#         group_memberships = GroupMember.query.filter_by(user_id=user_id).all()
-#         group_ids = [membership.group_id for membership in group_memberships]
-#
-#         groups = Group.query.filter(Group.id.in_(group_ids)).all()
-#
-#         group_list = []
-#         for group in groups:
-#             last_message = GroupMessage.query.filter_by(group_id=group.id).order_by(GroupMessage.timestamp.desc()).first()
-#             group_data = {
-#                 "id": group.id,
-#                 "name": group.name,
-#                 "created_by": group.created_by,
-#                 "avatar": group.avatar,
-#                 "last_message": {
-#                     "text": last_message.text if last_message else None,
-#                     "timestamp": last_message.timestamp if last_message else None,
-#                     "is_read": last_message.is_read if last_message else None
-#                 },
-#                 "count_msg": group.count_msg
-#             }
-#             group_list.append(group_data)
-#
-#         return jsonify(group_list), 200
-#     except Exception as e:
-#         return jsonify({"error": str(e)}), 500
 
 
 @groups_bp.route('/groups/<int:group_id>/avatar', methods=['PUT'])
