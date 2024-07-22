@@ -4,6 +4,34 @@ from sqlalchemy.sql import func
 db = SQLAlchemy()
 
 
+def increment_message_count(dialog_id=None, group_id=None):
+    if dialog_id:
+        dialog = Dialog.query.get(dialog_id)
+        if dialog:
+            dialog.count_msg += 1
+            db.session.commit()
+
+    if group_id:
+        group = Group.query.get(group_id)
+        if group:
+            group.count_msg += 1
+            db.session.commit()
+
+
+def decrement_message_count(dialog_id=None, group_id=None, count=1):
+    if dialog_id:
+        dialog = Dialog.query.get(dialog_id)
+        if dialog and dialog.count_msg > 0:
+            dialog.count_msg -= count
+            db.session.commit()
+
+    if group_id:
+        group = Group.query.get(group_id)
+        if group and group.count_msg > 0:
+            group.count_msg -= count
+            db.session.commit()
+
+
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(50), nullable=False, unique=True)
@@ -23,6 +51,9 @@ class Dialog(db.Model):
     id_user1 = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     id_user2 = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     key = db.Column(db.String(256))
+    count_msg = db.Column(db.Integer, default=0)
+    can_delete = db.Column(db.Boolean, default=False)
+    auto_delete_interval = db.Column(db.Integer, default=0)
 
     messages = db.relationship('Message', backref='dialog', lazy=True)
 
@@ -46,7 +77,10 @@ class Group(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(50), nullable=False)
     created_by = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
-    avatar = db.Column(db.String(256))
+    avatar = db.Column(db.String(256), default="default.png")
+    count_msg = db.Column(db.Integer, default=0)
+    can_delete = db.Column(db.Boolean, default=False)
+    auto_delete_interval = db.Column(db.Integer, default=0)
 
     members = db.relationship('GroupMember', backref='group', lazy=True)
     messages = db.relationship('GroupMessage', backref='group', lazy=True)

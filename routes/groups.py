@@ -1,6 +1,7 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
-from models import db, Group, GroupMessage, GroupMember, User
+from models import db, Group, GroupMessage, GroupMember, User, increment_message_count, decrement_message_count
+
 
 groups_bp = Blueprint('groups', __name__)
 
@@ -21,7 +22,16 @@ def create_group():
         new_member = GroupMember(group_id=new_group.id, user_id=user_id)
         db.session.add(new_member)
 
+        # Отправка сообщения о создании группы
+        user = User.query.get(user_id)
+        creation_message = GroupMessage(
+            group_id=new_group.id,
+            id_sender=user_id,
+            text=f"{user.username} has created a group",
+        )
+        db.session.add(creation_message)
         db.session.commit()
+
         return jsonify({'message': 'Group created and user added successfully'}), 201
     except Exception as e:
         db.session.rollback()  # Откат транзакции в случае ошибки
@@ -76,19 +86,31 @@ def edit_group_message(group_message_id):
         return jsonify({"error": str(e)}), 500
 
 
-@groups_bp.route('/group_messages/<int:group_message_id>', methods=['DELETE'])
+@groups_bp.route('/group_messages', methods=['DELETE'])
 @jwt_required()
-def delete_group_message(group_message_id):
+def delete_group_messages():
     try:
-        group_message = GroupMessage.query.get(group_message_id)
-        if not group_message:
-            return jsonify({"error": "Group message not found"}), 404
+        data = request.get_json()
+        group_message_ids = data.get('group_message_ids', [])
 
-        db.session.delete(group_message)
+        if not group_message_ids:
+            return jsonify({"error": "No group message IDs provided"}), 400
+
+        group_messages = GroupMessage.query.filter(GroupMessage.id.in_(group_message_ids)).all()
+        if not group_messages:
+            return jsonify({"error": "Some group messages not found"}), 404
+
+        for group_message in group_messages:
+            db.session.delete(group_message)
+
+        decrement_message_count(group_id=group_messages[0], count=len(group_messages))
+
         db.session.commit()
-        return jsonify({"message": "Group message deleted successfully"}), 200
+        return jsonify({"message": "Group messages deleted successfully"}), 200
     except Exception as e:
+        db.session.rollback()  # Откат транзакции в случае ошибки
         return jsonify({"error": str(e)}), 500
+
 
 
 @groups_bp.route('/groups/<int:group_id>', methods=['DELETE'])
@@ -236,7 +258,8 @@ def get_my_groups():
                     "text": last_message.text if last_message else None,
                     "timestamp": last_message.timestamp if last_message else None,
                     "is_read": last_message.is_read if last_message else None
-                }
+                },
+                "count_msg": group.count_msg
             }
             group_list.append(group_data)
 
@@ -265,5 +288,91 @@ def update_group_avatar(group_id):
         group.avatar = new_avatar
         db.session.commit()
         return jsonify({"message": "Group avatar updated successfully"}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@groups_bp.route('/group_messages/read', methods=['PUT'])
+@jwt_required()
+def mark_group_messages_as_read():
+    try:
+        user_id = get_jwt_identity()
+        data = request.get_json()
+        message_ids = data.get('message_ids')
+
+        if not message_ids:
+            return jsonify({"error": "No message IDs provided"}), 400
+
+        messages = GroupMessage.query.filter(GroupMessage.id.in_(message_ids)).all()
+
+        if not messages:
+            return jsonify({"error": "Messages not found"}), 404
+
+        for message in messages:
+            # Проверяем, что текущий пользователь не является отправителем сообщения
+            if message.id_sender == user_id:
+                return jsonify({"error": "Sender cannot mark their own message as read"}), 400
+
+            # Проверяем, что сообщение относится к группе, в которой состоит текущий пользователь
+            group = Group.query.get(message.group_id)
+            if not group:
+                return jsonify({"error": "Group not found"}), 404
+
+            member = GroupMember.query.filter_by(group_id=group.id, user_id=user_id).first()
+            if not member:
+                return jsonify({"error": "Unauthorized to mark this message as read"}), 403
+
+            message.is_read = True
+
+        db.session.commit()
+        return jsonify({"message": "Group messages marked as read"}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@groups_bp.route('/groups/<int:group_id>/toggle_can_delete', methods=['PUT'])
+@jwt_required()
+def toggle_group_can_delete(group_id):
+    try:
+        group = Group.query.get(group_id)
+        if not group:
+            return jsonify({"error": "Group not found"}), 404
+
+        group.can_delete = not group.can_delete
+        db.session.commit()
+        return jsonify({"message": "Group can_delete flag updated successfully", "can_delete": group.can_delete}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@groups_bp.route('/groups/<int:group_id>/update_auto_delete_interval', methods=['PUT'])
+@jwt_required()
+def update_group_auto_delete_interval(group_id):
+    try:
+        data = request.get_json()
+        auto_delete_interval = data.get('auto_delete_interval')
+
+        group = Group.query.get(group_id)
+        if not group:
+            return jsonify({"error": "Group not found"}), 404
+
+        group.auto_delete_interval = auto_delete_interval
+        db.session.commit()
+        return jsonify({"message": "Group auto_delete_interval updated successfully", "auto_delete_interval": group.auto_delete_interval}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@groups_bp.route('/groups/<int:group_id>/delete_messages', methods=['DELETE'])
+@jwt_required()
+def delete_group_messages(group_id):
+    try:
+        group = Group.query.get(group_id)
+        if not group:
+            return jsonify({"error": "Group not found"}), 404
+
+        GroupMessage.query.filter_by(group_id=group_id).delete()
+        db.session.commit()
+        return jsonify({"message": "All messages in the group deleted successfully"}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500

@@ -1,8 +1,10 @@
+from tkinter import dialog
+
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from sqlalchemy.exc import NoSuchColumnError
-
-from models import db, Message, Dialog, User
+from models import (db, Message, Dialog, User, Group, GroupMessage, GroupMember, increment_message_count,
+                    decrement_message_count)
 
 messages_bp = Blueprint('messages', __name__)
 
@@ -30,6 +32,17 @@ def create_dialog():
     new_dialog = Dialog(id_user1=user_id, id_user2=other_user.id)
     db.session.add(new_dialog)
     db.session.commit()
+
+    # Отправка сообщения о создании диалога
+    user = User.query.get(user_id)
+    creation_message = Message(
+        id_dialog=new_dialog.id,
+        id_sender=user_id,
+        text=f"{user.username} has created a dialog"
+    )
+    db.session.add(creation_message)
+    db.session.commit()
+    increment_message_count(dialog_id=new_dialog.id)
 
     return jsonify({'message': 'Dialog created successfully'}), 201
 
@@ -65,7 +78,8 @@ def get_dialogs():
                     "text": last_message.text if last_message else None,
                     "timestamp": last_message.timestamp if last_message else None,
                     "is_read": last_message.is_read if last_message else None
-                }
+                },
+                "count_msg": dialog.count_msg
             }
             dialog_list.append(dialog_data)
 
@@ -99,6 +113,7 @@ def send_message():
         )
         db.session.add(message)
         db.session.commit()
+        increment_message_count(dialog_id=id_dialog)
         return jsonify({"message": "Message sent successfully"}), 201
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -180,18 +195,29 @@ def edit_message(message_id):
         return jsonify({'error': str(e)}), 500
 
 
-@messages_bp.route('/messages/<int:message_id>', methods=['DELETE'])
+@messages_bp.route('/messages', methods=['DELETE'])
 @jwt_required()
-def delete_message(message_id):
+def delete_messages():
     try:
-        message = Message.query.get(message_id)
-        if not message:
-            return jsonify({"error": "Message not found"}), 404
+        data = request.get_json()
+        message_ids = data.get('message_ids', [])
 
-        db.session.delete(message)
+        if not message_ids:
+            return jsonify({"error": "No message IDs provided"}), 400
+
+        messages = Message.query.filter(Message.id.in_(message_ids)).all()
+        if not messages:
+            return jsonify({"error": "Some messages not found"}), 404
+
+        for message in messages:
+            db.session.delete(message)
+
+        decrement_message_count(dialog_id=messages[0].id_dialog, count=len(messages))
+
         db.session.commit()
-        return jsonify({"message": "Message deleted successfully"}), 200
+        return jsonify({"message": "Messages deleted successfully"}), 200
     except Exception as e:
+        db.session.rollback()  # Откат транзакции в случае ошибки
         return jsonify({"error": str(e)}), 500
 
 
@@ -229,28 +255,36 @@ def get_users():
         return jsonify({'error': str(e)}), 500
 
 
-@messages_bp.route('/messages/<int:message_id>/read', methods=['PUT'])
+@messages_bp.route('/messages/read', methods=['PUT'])
 @jwt_required()
-def mark_message_as_read(message_id):
+def mark_messages_as_read():
     try:
         user_id = get_jwt_identity()
-        message = Message.query.get(message_id)
+        data = request.get_json()
+        message_ids = data.get('message_ids')
 
-        if not message:
-            return jsonify({"error": "Message not found"}), 404
+        if not message_ids:
+            return jsonify({"error": "No message IDs provided"}), 400
 
-        # Проверяем, что текущий пользователь не является отправителем сообщения
-        if message.id_sender == user_id:
-            return jsonify({"error": "Sender cannot mark their own message as read"}), 400
+        messages = Message.query.filter(Message.id.in_(message_ids)).all()
 
-        # Проверяем, что сообщение относится к диалогу, в котором участвует текущий пользователь
-        dialog = Dialog.query.get(message.id_dialog)
-        if not dialog or (dialog.id_user1 != user_id and dialog.id_user2 != user_id):
-            return jsonify({"error": "Unauthorized to mark this message as read"}), 403
+        if not messages:
+            return jsonify({"error": "Messages not found"}), 404
 
-        message.is_read = True
+        for message in messages:
+            # Проверяем, что текущий пользователь не является отправителем сообщения
+            if message.id_sender == user_id:
+                return jsonify({"error": "Sender cannot mark their own message as read"}), 400
+
+            # Проверяем, что сообщение относится к диалогу, в котором участвует текущий пользователь
+            dialog = Dialog.query.get(message.id_dialog)
+            if not dialog or (dialog.id_user1 != user_id and dialog.id_user2 != user_id):
+                return jsonify({"error": "Unauthorized to mark this message as read"}), 403
+
+            message.is_read = True
+
         db.session.commit()
-        return jsonify({"message": "Message marked as read"}), 200
+        return jsonify({"message": "Messages marked as read"}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -276,3 +310,119 @@ def search_messages_in_dialog(dialog_id):
     message_list = [{'id': message.id, 'id_sender': message.id_sender, 'text': message.text, 'timestamp': message.timestamp} for message in messages]
 
     return jsonify(message_list), 200
+
+
+@messages_bp.route('/conversations', methods=['GET'])
+@jwt_required()
+def get_conversations():
+    user_id = get_jwt_identity()
+    try:
+        # Получение диалогов
+        dialogs = Dialog.query.filter((Dialog.id_user1 == user_id) | (Dialog.id_user2 == user_id)).all()
+
+        dialog_list = []
+        for dialog in dialogs:
+            other_user_id = dialog.id_user1 if dialog.id_user1 != user_id else dialog.id_user2
+            other_user = User.query.get(other_user_id)
+            last_message = Message.query.filter_by(id_dialog=dialog.id).order_by(Message.timestamp.desc()).first()
+
+            dialog_data = {
+                "type": "dialog",
+                "id": dialog.id,
+                "key": dialog.key,
+                "other_user": {
+                    "id": other_user.id,
+                    "name": other_user.name,
+                    "username": other_user.username,
+                    "avatar": other_user.avatar
+                },
+                "last_message": {
+                    "text": last_message.text if last_message else None,
+                    "timestamp": last_message.timestamp if last_message else None,
+                    "is_read": last_message.is_read if last_message else None
+                },
+                "count_msg": dialog.count_msg
+            }
+            dialog_list.append(dialog_data)
+
+        # Получение групп
+        group_memberships = GroupMember.query.filter_by(user_id=user_id).all()
+        group_ids = [membership.group_id for membership in group_memberships]
+
+        groups = Group.query.filter(Group.id.in_(group_ids)).all()
+
+        group_list = []
+        for group in groups:
+            last_message = GroupMessage.query.filter_by(group_id=group.id).order_by(
+                GroupMessage.timestamp.desc()).first()
+            group_data = {
+                "type": "group",
+                "id": group.id,
+                "name": group.name,
+                "created_by": group.created_by,
+                "avatar": group.avatar,
+                "last_message": {
+                    "text": last_message.text if last_message else None,
+                    "timestamp": last_message.timestamp if last_message else None,
+                    "is_read": last_message.is_read if last_message else None
+                },
+                "count_msg": group.count_msg
+            }
+            group_list.append(group_data)
+
+        # Объединение и сортировка диалогов и групп по времени последнего сообщения
+        conversations = dialog_list + group_list
+        sorted_conversations = sorted(conversations, key=lambda x: x['last_message']['timestamp'] if x['last_message'][
+            'timestamp'] else 0, reverse=True)
+
+        return jsonify(sorted_conversations), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@messages_bp.route('/dialogs/<int:dialog_id>/toggle_can_delete', methods=['PUT'])
+@jwt_required()
+def toggle_dialog_can_delete(dialog_id):
+    try:
+        dialog = Dialog.query.get(dialog_id)
+        if not dialog:
+            return jsonify({"error": "Dialog not found"}), 404
+
+        dialog.can_delete = not dialog.can_delete
+        db.session.commit()
+        return jsonify({"message": "Dialog can_delete flag updated successfully", "can_delete": dialog.can_delete}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@messages_bp.route('/dialogs/<int:dialog_id>/update_auto_delete_interval', methods=['PUT'])
+@jwt_required()
+def update_dialog_auto_delete_interval(dialog_id):
+    try:
+        data = request.get_json()
+        auto_delete_interval = data.get('auto_delete_interval')
+
+        dialog = Dialog.query.get(dialog_id)
+        if not dialog:
+            return jsonify({"error": "Dialog not found"}), 404
+
+        dialog.auto_delete_interval = auto_delete_interval
+        db.session.commit()
+        return jsonify({"message": "Dialog auto_delete_interval updated successfully", "auto_delete_interval": dialog.auto_delete_interval}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@messages_bp.route('/dialogs/<int:dialog_id>/delete_messages', methods=['DELETE'])
+@jwt_required()
+def delete_dialog_messages(dialog_id):
+    try:
+        dialog = Dialog.query.get(dialog_id)
+        if not dialog:
+            return jsonify({"error": "Dialog not found"}), 404
+
+        Message.query.filter_by(id_dialog=dialog_id).delete()
+        db.session.commit()
+        return jsonify({"message": "All messages in the dialog deleted successfully"}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500

@@ -4,7 +4,7 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="1f77eedd-6591-4501-b419-726123b82c25" name="Changes" comment="add queries...">
+    <list default="true" id="1f77eedd-6591-4501-b419-726123b82c25" name="Changes" comment="">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/models.py" beforeDir="false" afterPath="$PROJECT_DIR$/models.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/routes/groups.py" beforeDir="false" afterPath="$PROJECT_DIR$/routes/groups.py" afterDir="false" />
@@ -122,7 +122,8 @@
       <workItem from="1721405608547" duration="497000" />
       <workItem from="1721417877809" duration="5547000" />
       <workItem from="1721509803955" duration="1453000" />
-      <workItem from="1721566451607" duration="14570000" />
+      <workItem from="1721566451607" duration="14614000" />
+      <workItem from="1721647572815" duration="11115000" />
     </task>
     <task id="LOCAL-00001" summary="mega grill">
       <option name="closed" value="true" />
@@ -172,7 +173,15 @@
       <option name="project" value="LOCAL" />
       <updated>1721587717510</updated>
     </task>
-    <option name="localTasksCounter" value="7" />
+    <task id="LOCAL-00007" summary="the final is close">
+      <option name="closed" value="true" />
+      <created>1721589006300</created>
+      <option name="number" value="00007" />
+      <option name="presentableId" value="LOCAL-00007" />
+      <option name="project" value="LOCAL" />
+      <updated>1721589006300</updated>
+    </task>
+    <option name="localTasksCounter" value="8" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -196,6 +205,7 @@
     <MESSAGE value="fix some queries" />
     <MESSAGE value="fix fix..." />
     <MESSAGE value="add queries..." />
-    <option name="LAST_COMMIT_MESSAGE" value="add queries..." />
+    <MESSAGE value="the final is close" />
+    <option name="LAST_COMMIT_MESSAGE" value="the final is close" />
   </component>
 </project>
