@@ -1,5 +1,3 @@
-from tkinter import dialog
-
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from sqlalchemy.exc import NoSuchColumnError
@@ -47,47 +45,47 @@ def create_dialog():
     return jsonify({'message': 'Dialog created successfully'}), 201
 
 
-@messages_bp.route('/dialogs', methods=['GET'])
-@jwt_required()
-def get_dialogs():
-    user_id = get_jwt_identity()
-    try:
-        # Проверяем наличие атрибутов в модели
-        if not hasattr(Dialog, 'id_user1') or not hasattr(Dialog, 'id_user2'):
-            return jsonify(
-                {"error": "The 'Dialog' model does not have required attributes 'id_user1' and 'id_user2'"}), 400
-
-        dialogs = Dialog.query.filter((Dialog.id_user1 == user_id) | (Dialog.id_user2 == user_id)).all()
-
-        dialog_list = []
-        for dialog in dialogs:
-            other_user_id = dialog.id_user1 if dialog.id_user1 != user_id else dialog.id_user2
-            other_user = User.query.get(other_user_id)
-            last_message = Message.query.filter_by(id_dialog=dialog.id).order_by(Message.timestamp.desc()).first()
-
-            dialog_data = {
-                "dialog_id": dialog.id,
-                "key": dialog.key,
-                "other_user": {
-                    "id": other_user.id,
-                    "name": other_user.name,
-                    "username": other_user.username,
-                    "avatar": other_user.avatar
-                },
-                "last_message": {
-                    "text": last_message.text if last_message else None,
-                    "timestamp": last_message.timestamp if last_message else None,
-                    "is_read": last_message.is_read if last_message else None
-                },
-                "count_msg": dialog.count_msg
-            }
-            dialog_list.append(dialog_data)
-
-        return jsonify(dialog_list), 200
-    except NoSuchColumnError as e:
-        return jsonify({"error": str(e)}), 400
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+# @messages_bp.route('/dialogs', methods=['GET'])
+# @jwt_required()
+# def get_dialogs():
+#     user_id = get_jwt_identity()
+#     try:
+#         # Проверяем наличие атрибутов в модели
+#         if not hasattr(Dialog, 'id_user1') or not hasattr(Dialog, 'id_user2'):
+#             return jsonify(
+#                 {"error": "The 'Dialog' model does not have required attributes 'id_user1' and 'id_user2'"}), 400
+#
+#         dialogs = Dialog.query.filter((Dialog.id_user1 == user_id) | (Dialog.id_user2 == user_id)).all()
+#
+#         dialog_list = []
+#         for dialog in dialogs:
+#             other_user_id = dialog.id_user1 if dialog.id_user1 != user_id else dialog.id_user2
+#             other_user = User.query.get(other_user_id)
+#             last_message = Message.query.filter_by(id_dialog=dialog.id).order_by(Message.timestamp.desc()).first()
+#
+#             dialog_data = {
+#                 "dialog_id": dialog.id,
+#                 "key": dialog.key,
+#                 "other_user": {
+#                     "id": other_user.id,
+#                     "name": other_user.name,
+#                     "username": other_user.username,
+#                     "avatar": other_user.avatar
+#                 },
+#                 "last_message": {
+#                     "text": last_message.text if last_message else None,
+#                     "timestamp": last_message.timestamp if last_message else None,
+#                     "is_read": last_message.is_read if last_message else None
+#                 },
+#                 "count_msg": dialog.count_msg
+#             }
+#             dialog_list.append(dialog_data)
+#
+#         return jsonify(dialog_list), 200
+#     except NoSuchColumnError as e:
+#         return jsonify({"error": str(e)}), 400
+#     except Exception as e:
+#         return jsonify({"error": str(e)}), 500
 
 
 @messages_bp.route('/messages', methods=['POST'])
@@ -102,6 +100,16 @@ def send_message():
         voice = data.get('voice')
         file = data.get('file')
 
+        # Проверка на существование диалога
+        dialog = Dialog.query.get(id_dialog)
+        if not dialog:
+            return jsonify({"error": "Dialog not found"}), 404
+
+        # Проверка на участие отправителя в диалоге
+        if dialog.id_user1 != id_sender and dialog.id_user2 != id_sender:
+            return jsonify({"error": "You are not a participant in this dialog"}), 403
+
+        # Создание и сохранение нового сообщения
         message = Message(
             id_dialog=id_dialog,
             id_sender=id_sender,
@@ -113,7 +121,9 @@ def send_message():
         )
         db.session.add(message)
         db.session.commit()
+
         increment_message_count(dialog_id=id_dialog)
+
         return jsonify({"message": "Message sent successfully"}), 201
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -123,11 +133,47 @@ def send_message():
 @jwt_required()
 def get_messages():
     try:
-        id_dialog = request.args.get('id_dialog')
-        messages = Message.query.filter_by(id_dialog=id_dialog).all()
-        messages_data = [{"id": msg.id, "id_sender": msg.id_sender, "id_dialog": msg.id_dialog, "text": msg.text, "images": msg.images, "voice": msg.voice, "file": msg.file,
-                          "is_read": msg.is_read, "is_edited": msg.is_edited, "timestamp": msg.timestamp} for msg in messages]
+        id_dialog = request.headers.get('id_dialog')
+        user_id = get_jwt_identity()
+
+        # Проверка на участие пользователя в диалоге
+        dialog = Dialog.query.get(id_dialog)
+        if not dialog:
+            return jsonify({"error": "Dialog not found"}), 404
+        if dialog.id_user1 != user_id and dialog.id_user2 != user_id:
+            return jsonify({"error": "You are not a participant in this dialog"}), 403
+
+        # Пагинация
+        start = request.args.get('start', type=int)
+        end = request.args.get('end', type=int)
+
+        if start is None or end is None:
+            return jsonify({'error': 'id_dialog, start, and end parameters are required'}), 400
+
+        if start < 0 or end <= start:
+            return jsonify({'error': 'Invalid start or end values'}), 400
+
+        messages = Message.query.filter_by(id_dialog=id_dialog).order_by(Message.timestamp.desc()).slice(start,
+                                                                                                         end).all()
+
+        messages_data = [
+            {
+                "id": msg.id,
+                "id_sender": msg.id_sender,
+                "id_dialog": msg.id_dialog,
+                "text": msg.text,
+                "images": msg.images,
+                "voice": msg.voice,
+                "file": msg.file,
+                "is_read": msg.is_read,
+                "is_edited": msg.is_edited,
+                "timestamp": msg.timestamp
+            }
+            for msg in messages
+        ]
+
         return jsonify(messages_data), 200
+
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -136,9 +182,13 @@ def get_messages():
 @jwt_required()
 def add_key_to_dialog(dialog_id):
     try:
+        user_id = get_jwt_identity()
         dialog = Dialog.query.get(dialog_id)
         if not dialog:
             return jsonify({"error": "Dialog not found"}), 404
+
+        if dialog.id_user1 != user_id and dialog.id_user2 != user_id:
+            return jsonify({"error": "You are not a participant in this dialog"}), 403
 
         data = request.get_json()
         key = data.get('key')
@@ -156,9 +206,13 @@ def add_key_to_dialog(dialog_id):
 @jwt_required()
 def remove_key_from_dialog(dialog_id):
     try:
+        user_id = get_jwt_identity()
         dialog = Dialog.query.get(dialog_id)
         if not dialog:
             return jsonify({"error": "Dialog not found"}), 404
+
+        if dialog.id_user1 != user_id and dialog.id_user2 != user_id:
+            return jsonify({"error": "You are not a participant in this dialog"}), 403
 
         dialog.key = None
         db.session.commit()
@@ -199,6 +253,7 @@ def edit_message(message_id):
 @jwt_required()
 def delete_messages():
     try:
+        user_id = get_jwt_identity()
         data = request.get_json()
         message_ids = data.get('message_ids', [])
 
@@ -208,6 +263,12 @@ def delete_messages():
         messages = Message.query.filter(Message.id.in_(message_ids)).all()
         if not messages:
             return jsonify({"error": "Some messages not found"}), 404
+
+        # Проверка на участие пользователя в диалоге
+        for message in messages:
+            dialog = Dialog.query.get(message.id_dialog)
+            if dialog.id_user1 != user_id and dialog.id_user2 != user_id:
+                return jsonify({"error": "You are not a participant in the dialog of one of the messages"}), 403
 
         for message in messages:
             db.session.delete(message)
@@ -225,9 +286,13 @@ def delete_messages():
 @jwt_required()
 def delete_dialog(dialog_id):
     try:
+        user_id = get_jwt_identity()
         dialog = Dialog.query.get(dialog_id)
         if not dialog:
             return jsonify({"error": "Dialog not found"}), 404
+
+        if dialog.id_user1 != user_id and dialog.id_user2 != user_id:
+            return jsonify({"error": "You are not a participant in this dialog"}), 403
 
         db.session.delete(dialog)
         db.session.commit()
@@ -284,7 +349,7 @@ def mark_messages_as_read():
             message.is_read = True
 
         db.session.commit()
-        return jsonify({"message": "Messages marked as read"}), 200
+        return jsonify({"message": "Messages marked as read successfully"}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -384,9 +449,14 @@ def get_conversations():
 @jwt_required()
 def toggle_dialog_can_delete(dialog_id):
     try:
+        user_id = get_jwt_identity()
         dialog = Dialog.query.get(dialog_id)
         if not dialog:
             return jsonify({"error": "Dialog not found"}), 404
+
+        # Проверка, что пользователь является участником диалога
+        if user_id not in dialog.participants:
+            return jsonify({"error": "You are not a participant in this dialog"}), 403
 
         dialog.can_delete = not dialog.can_delete
         db.session.commit()
@@ -399,6 +469,7 @@ def toggle_dialog_can_delete(dialog_id):
 @jwt_required()
 def update_dialog_auto_delete_interval(dialog_id):
     try:
+        user_id = get_jwt_identity()
         data = request.get_json()
         auto_delete_interval = data.get('auto_delete_interval')
 
@@ -406,9 +477,14 @@ def update_dialog_auto_delete_interval(dialog_id):
         if not dialog:
             return jsonify({"error": "Dialog not found"}), 404
 
+        # Проверка, что пользователь является участником диалога
+        if user_id not in dialog.participants:
+            return jsonify({"error": "You are not a participant in this dialog"}), 403
+
         dialog.auto_delete_interval = auto_delete_interval
         db.session.commit()
-        return jsonify({"message": "Dialog auto_delete_interval updated successfully", "auto_delete_interval": dialog.auto_delete_interval}), 200
+        return jsonify({"message": "Dialog auto_delete_interval updated successfully",
+                        "auto_delete_interval": dialog.auto_delete_interval}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -417,12 +493,18 @@ def update_dialog_auto_delete_interval(dialog_id):
 @jwt_required()
 def delete_dialog_messages(dialog_id):
     try:
+        user_id = get_jwt_identity()
         dialog = Dialog.query.get(dialog_id)
         if not dialog:
             return jsonify({"error": "Dialog not found"}), 404
+
+        # Проверка, что пользователь является участником диалога
+        if user_id not in dialog.participants:
+            return jsonify({"error": "You are not a participant in this dialog"}), 403
 
         Message.query.filter_by(id_dialog=dialog_id).delete()
         db.session.commit()
         return jsonify({"message": "All messages in the dialog deleted successfully"}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+

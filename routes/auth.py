@@ -38,6 +38,9 @@ def update_profile():
     try:
         user_id = get_jwt_identity()
         user = User.query.get(user_id)
+        if not user:
+            return jsonify({"error": "User not found"}), 404
+
         data = request.get_json()
         user.username = data.get('username', user.username)
         user.avatar = data.get('avatar', user.avatar)
