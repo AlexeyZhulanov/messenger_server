@@ -464,3 +464,23 @@ def delete_dialog_messages(dialog_id):
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+
+@messages_bp.route('/dialog/<int:dialog_id>/settings', methods=['GET'])
+@jwt_required()
+def get_dialog_settings(dialog_id):
+    user_id = get_jwt_identity()
+    try:
+        dialog = Dialog.query.filter(
+            ((Dialog.id_user1 == user_id) | (Dialog.id_user2 == user_id)) &
+            (Dialog.id == dialog_id)
+        ).first()
+
+        if not dialog:
+            return jsonify({"error": "Dialog not found or user not a participant"}), 404
+
+        return jsonify({
+            "can_delete": dialog.can_delete,
+            "auto_delete_interval": dialog.auto_delete_interval
+        }), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500

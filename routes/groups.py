@@ -438,3 +438,24 @@ def delete_group_messages(group_id):
         return jsonify({"message": "All messages in the group deleted successfully"}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+@groups_bp.route('/group/<int:group_id>/settings', methods=['GET'])
+@jwt_required()
+def get_group_settings(group_id):
+    user_id = get_jwt_identity()
+    try:
+        group_member = GroupMember.query.filter_by(user_id=user_id, group_id=group_id).first()
+        if not group_member:
+            return jsonify({"error": "User not a participant of this group"}), 404
+
+        group = Group.query.get(group_id)
+        if not group:
+            return jsonify({"error": "Group not found"}), 404
+
+        return jsonify({
+            "can_delete": group.can_delete,
+            "auto_delete_interval": group.auto_delete_interval
+        }), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
