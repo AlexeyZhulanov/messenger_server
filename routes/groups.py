@@ -424,7 +424,7 @@ def update_group_auto_delete_interval(group_id):
 
 @groups_bp.route('/groups/<int:group_id>/delete_messages', methods=['DELETE'])
 @jwt_required()
-def delete_group_messages(group_id):
+def delete_group_messages_all(group_id):
     try:
         user_id = get_jwt_identity()
         group = Group.query.get(group_id)
