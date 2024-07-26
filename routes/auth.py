@@ -2,6 +2,7 @@ from flask import Blueprint, request, jsonify
 from flask_jwt_extended import create_access_token, jwt_required, get_jwt_identity
 from werkzeug.security import generate_password_hash, check_password_hash
 from models import db, User
+from datetime import datetime, timezone
 
 auth_bp = Blueprint('auth', __name__)
 
@@ -67,5 +68,35 @@ def update_password():
         user.password = generate_password_hash(new_password, method='pbkdf2:sha256')
         db.session.commit()
         return jsonify({"message": "Password updated successfully"}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@auth_bp.route('/update_last_session', methods=['PUT'])
+@jwt_required()
+def update_last_session():
+    user_id = get_jwt_identity()
+    try:
+        user = User.query.get(user_id)
+        if not user:
+            return jsonify({"error": "User not found"}), 404
+
+        user.last_session = datetime.now(timezone.utc)
+        db.session.commit()
+        return jsonify({"message": "Last session time updated successfully"}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@auth_bp.route('/last_session/<int:user_id>', methods=['GET'])
+@jwt_required()
+def get_last_session(user_id):
+    try:
+        # Поиск пользователя по id или username
+        user = User.query.filter(User.id == user_id).first()
+        if not user:
+            return jsonify({"error": "User not found"}), 404
+
+        return jsonify({"last_session": user.last_session}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500

@@ -1,6 +1,5 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
-from sqlalchemy.exc import NoSuchColumnError
 from models import (db, Message, Dialog, User, Group, GroupMessage, GroupMember, increment_message_count,
                     decrement_message_count)
 

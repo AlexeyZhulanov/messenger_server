@@ -38,6 +38,7 @@ class User(db.Model):
     username = db.Column(db.String(50), unique=True, nullable=False)
     password = db.Column(db.String(256), nullable=False)
     avatar = db.Column(db.String(256))
+    last_session = db.Column(db.DateTime, server_default=func.now(), onupdate=func.now())
 
     dialogs_as_user1 = db.relationship('Dialog', foreign_keys='Dialog.id_user1', backref='user1', lazy=True)
     dialogs_as_user2 = db.relationship('Dialog', foreign_keys='Dialog.id_user2', backref='user2', lazy=True)

@@ -39,13 +39,12 @@ def create_group():
         return jsonify({'error': str(e)}), 500
 
 
-@groups_bp.route('/group/messages', methods=['POST'])
+@groups_bp.route('/group/<int:group_id>/messages', methods=['POST'])
 @jwt_required()
-def send_group_message():
+def send_group_message(group_id):
     try:
         user_id = get_jwt_identity()
         data = request.get_json()
-        group_id = data.get('group_id')
         text = data.get('text')
         images = data.get('images')
         voice = data.get('voice')
