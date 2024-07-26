@@ -48,8 +48,8 @@ def create_dialog():
 @jwt_required()
 def send_message():
     try:
+        id_dialog = request.headers.get('id_dialog')
         data = request.get_json()
-        id_dialog = data.get('id_dialog')
         id_sender = get_jwt_identity()
         text = data.get('text')
         images = data.get('images')
