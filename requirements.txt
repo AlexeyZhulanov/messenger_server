@@ -4,3 +4,4 @@ Flask-Bcrypt
 Flask-JWT-Extended
 werkzeug
 sqlalchemy
+gunicorn
