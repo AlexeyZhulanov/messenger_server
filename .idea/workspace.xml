@@ -4,10 +4,9 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="1f77eedd-6591-4501-b419-726123b82c25" name="Changes" comment="add last session monitoring">
+    <list default="true" id="1f77eedd-6591-4501-b419-726123b82c25" name="Changes" comment="mini fix 2">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/routes/groups.py" beforeDir="false" afterPath="$PROJECT_DIR$/routes/groups.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/routes/messages.py" beforeDir="false" afterPath="$PROJECT_DIR$/routes/messages.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/routes/auth.py" beforeDir="false" afterPath="$PROJECT_DIR$/routes/auth.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -60,6 +59,7 @@
   <component name="PropertiesComponent">{
   &quot;keyToString&quot;: {
     &quot;HTTP Request.generated-requests | #1.executor&quot;: &quot;Run&quot;,
+    &quot;JavaScript Debug.127.0.0.1:5000.executor&quot;: &quot;Debug&quot;,
     &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
     &quot;git-widget-placeholder&quot;: &quot;master&quot;,
     &quot;last_opened_file_path&quot;: &quot;D:/PyCharmProjects/messenger_server/.venv/Scripts/python.exe&quot;,
@@ -72,8 +72,11 @@
     &quot;vue.rearranger.settings.migration&quot;: &quot;true&quot;
   }
 }</component>
-  <component name="RunManager" selected="Flask server.messenger_server">
+  <component name="RunManager" selected="JavaScript Debug.127.0.0.1:5000">
     <configuration name="generated-requests | #1" type="HttpClient.HttpRequestRunConfigurationType" factoryName="HTTP Request" temporary="true" nameIsGenerated="true" path="$APPLICATION_CONFIG_DIR$/scratches/generated-requests.http" requestIdentifier="#1" runType="Run single request">
+      <method v="2" />
+    </configuration>
+    <configuration name="127.0.0.1:5000" type="JavascriptDebugType" temporary="true" nameIsGenerated="true" uri="http://127.0.0.1:5000">
       <method v="2" />
     </configuration>
     <configuration name="messenger_server" type="Python.FlaskServer">
@@ -94,6 +97,7 @@
     </configuration>
     <recent_temporary>
       <list>
+        <item itemvalue="JavaScript Debug.127.0.0.1:5000" />
         <item itemvalue="HTTP Request.generated-requests | #1" />
       </list>
     </recent_temporary>
@@ -125,7 +129,11 @@
       <workItem from="1721647572815" duration="17443000" />
       <workItem from="1721937214870" duration="170000" />
       <workItem from="1721990385669" duration="1314000" />
-      <workItem from="1722005138867" duration="98000" />
+      <workItem from="1722005138867" duration="165000" />
+      <workItem from="1722008700235" duration="262000" />
+      <workItem from="1722011427936" duration="54000" />
+      <workItem from="1722078190564" duration="82000" />
+      <workItem from="1722102958973" duration="5306000" />
     </task>
     <task id="LOCAL-00001" summary="mega grill">
       <option name="closed" value="true" />
@@ -215,7 +223,31 @@
       <option name="project" value="LOCAL" />
       <updated>1721991407985</updated>
     </task>
-    <option name="localTasksCounter" value="12" />
+    <task id="LOCAL-00012" summary="maybe finish x2">
+      <option name="closed" value="true" />
+      <created>1722005271097</created>
+      <option name="number" value="00012" />
+      <option name="presentableId" value="LOCAL-00012" />
+      <option name="project" value="LOCAL" />
+      <updated>1722005271097</updated>
+    </task>
+    <task id="LOCAL-00013" summary="mini fix">
+      <option name="closed" value="true" />
+      <created>1722008942176</created>
+      <option name="number" value="00013" />
+      <option name="presentableId" value="LOCAL-00013" />
+      <option name="project" value="LOCAL" />
+      <updated>1722008942176</updated>
+    </task>
+    <task id="LOCAL-00014" summary="mini fix 2">
+      <option name="closed" value="true" />
+      <created>1722011471294</created>
+      <option name="number" value="00014" />
+      <option name="presentableId" value="LOCAL-00014" />
+      <option name="project" value="LOCAL" />
+      <updated>1722011471294</updated>
+    </task>
+    <option name="localTasksCounter" value="15" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -244,6 +276,9 @@
     <MESSAGE value="mega grill x3" />
     <MESSAGE value="maybe finish" />
     <MESSAGE value="add last session monitoring" />
-    <option name="LAST_COMMIT_MESSAGE" value="add last session monitoring" />
+    <MESSAGE value="maybe finish x2" />
+    <MESSAGE value="mini fix" />
+    <MESSAGE value="mini fix 2" />
+    <option name="LAST_COMMIT_MESSAGE" value="mini fix 2" />
   </component>
 </project>

@@ -11,6 +11,11 @@ auth_bp = Blueprint('auth', __name__)
 def register():
     try:
         data = request.get_json()
+        existing_user = User.query.filter_by(name=data['name']).first()
+
+        if existing_user:
+            return jsonify({'error': 'User with this name already exists'}), 400
+        
         hashed_password = generate_password_hash(data['password'], method='pbkdf2:sha256')
         new_user = User(name=data['name'], password=hashed_password, username=data['username'])
         db.session.add(new_user)
