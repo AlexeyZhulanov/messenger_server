@@ -459,3 +459,30 @@ def get_group_settings(group_id):
         }), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+@groups_bp.route('/groups/<int:group_id>/messages/search', methods=['GET'])
+@jwt_required()
+def search_messages_in_group(group_id):
+    user_id = get_jwt_identity()
+    search_text = request.args.get('q', '')
+
+    if not search_text:
+        return jsonify({"error": "Search text must be provided"}), 400
+
+    group = Group.query.get(group_id)
+    if not group:
+        return jsonify({"error": "Group not found"}), 404
+
+    # Проверка, является ли пользователь членом группы
+    if user_id not in [member.id for member in group.members]:
+        return jsonify({"error": "You are not a participant of this group"}), 403
+
+    messages = GroupMessage.query.filter(
+        GroupMessage.id_group == group_id,
+        GroupMessage.text.ilike(f'%{search_text}%')
+    ).all()
+
+    message_list = [{'id': message.id, 'id_sender': message.id_sender, 'text': message.text, 'timestamp': message.timestamp} for message in messages]
+
+    return jsonify(message_list), 200
