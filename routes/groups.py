@@ -79,7 +79,7 @@ def send_group_message(group_id):
 @jwt_required()
 def get_group_messages():
     try:
-        group_id = request.headers.get('group_id')
+        group_id = request.args.get('group_id')
         user_id = get_jwt_identity()
 
         # Проверка на участие пользователя в группе

@@ -48,7 +48,7 @@ def create_dialog():
 @jwt_required()
 def send_message():
     try:
-        id_dialog = request.headers.get('id_dialog')
+        id_dialog = request.args.get('id_dialog')
         data = request.get_json()
         id_sender = get_jwt_identity()
         text = data.get('text')
@@ -89,7 +89,7 @@ def send_message():
 @jwt_required()
 def get_messages():
     try:
-        id_dialog = request.headers.get('id_dialog')
+        id_dialog = request.args.get('id_dialog')
         user_id = get_jwt_identity()
 
         # Проверка на участие пользователя в диалоге
