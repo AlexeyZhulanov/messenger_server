@@ -99,7 +99,7 @@ def get_group_messages():
         if start < 0 or end <= start:
             return jsonify({'error': 'Invalid start or end values'}), 400
 
-        messages = GroupMessage.query.filter_by(group_id=group_id).order_by(GroupMessage.timestamp.desc()).slice(start, end).all()
+        messages = GroupMessage.query.filter_by(group_id=group_id).order_by(GroupMessage.timestamp.asc()).slice(start, end).all()
 
         messages_data = [
             {
