@@ -483,6 +483,18 @@ def search_messages_in_group(group_id):
         GroupMessage.text.ilike(f'%{search_text}%')
     ).all()
 
-    message_list = [{'id': message.id, 'id_sender': message.id_sender, 'text': message.text, 'timestamp': message.timestamp} for message in messages]
+    message_list = [{
+        "id": msg.id,
+        "sender_id": msg.sender_id,
+        "group_id": msg.group_id,
+        "text": msg.text,
+        "images": msg.images,
+        "voice": msg.voice,
+        "file": msg.file,
+        "is_read": msg.is_read,
+        "is_edited": msg.is_edited,
+        "timestamp": msg.timestamp
+    }
+     for msg in messages]
 
     return jsonify(message_list), 200

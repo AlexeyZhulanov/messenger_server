@@ -328,7 +328,18 @@ def search_messages_in_dialog(dialog_id):
 
     messages = Message.query.filter(Message.id_dialog == dialog_id, Message.text.ilike(f'%{search_text}%')).all()
 
-    message_list = [{'id': message.id, 'id_sender': message.id_sender, 'text': message.text, 'timestamp': message.timestamp} for message in messages]
+    message_list = [{
+        "id": message.id,
+        "id_sender": message.id_sender,
+        "id_dialog": message.id_dialog,
+        "text": message.text,
+        "images": message.images,
+        "voice": message.voice,
+        "file": message.file,
+        "is_read": message.is_read,
+        "is_edited": message.is_edited,
+        "timestamp": message.timestamp
+    } for message in messages]
 
     return jsonify(message_list), 200
 
