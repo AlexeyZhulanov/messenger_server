@@ -109,7 +109,7 @@ def get_messages():
         if start < 0 or end <= start:
             return jsonify({'error': 'Invalid start or end values'}), 400
 
-        messages = Message.query.filter_by(id_dialog=id_dialog).order_by(Message.timestamp.desc()).slice(start,
+        messages = Message.query.filter_by(id_dialog=id_dialog).order_by(Message.timestamp.asc()).slice(start,
                                                                                                          end).all()
 
         messages_data = [
