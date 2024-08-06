@@ -1,18 +1,9 @@
 import os
 import uuid
-from flask import Blueprint, request, jsonify, current_app, send_from_directory
+from flask import Blueprint, request, jsonify, send_from_directory, current_app
 from flask_jwt_extended import jwt_required
 
 uploads_bp = Blueprint('uploads', __name__)
-
-# File Upload Configurations
-UPLOAD_FOLDER_PHOTOS = 'uploads/photos'
-UPLOAD_FOLDER_AUDIO = 'uploads/audio'
-UPLOAD_FOLDER_FILES = 'uploads/files'
-
-current_app.config['UPLOAD_FOLDER_PHOTOS'] = UPLOAD_FOLDER_PHOTOS
-current_app.config['UPLOAD_FOLDER_AUDIO'] = UPLOAD_FOLDER_AUDIO
-current_app.config['UPLOAD_FOLDER_FILES'] = UPLOAD_FOLDER_FILES
 
 ALLOWED_PHOTO_EXTENSIONS = {'jpg', 'jpeg', 'png', 'gif'}
 ALLOWED_AUDIO_EXTENSIONS = {'mp3', 'wav', 'ogg'}
@@ -31,7 +22,6 @@ def save_file(file, folder, allowed_extensions):
     return None
 
 
-# Routes for file operations
 @uploads_bp.route('/upload/photo', methods=['POST'])
 @jwt_required()
 def upload_photo():
@@ -86,13 +76,3 @@ def get_file(folder, filename):
         return jsonify({'error': 'Invalid folder'}), 400
 
     return send_from_directory(folder_mapping[folder], filename)
-
-
-# Ensure the upload folders exist
-def create_upload_folders():
-    for folder in [UPLOAD_FOLDER_PHOTOS, UPLOAD_FOLDER_AUDIO, UPLOAD_FOLDER_FILES]:
-        if not os.path.exists(folder):
-            os.makedirs(folder)
-
-
-create_upload_folders()

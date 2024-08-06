@@ -2,6 +2,7 @@ from flask import Flask
 from flask_jwt_extended import JWTManager
 from config import Config
 from models import db
+import os
 
 app = Flask(__name__)
 
@@ -13,6 +14,11 @@ def create_app():
     jwt = JWTManager(app)
 
     with app.app_context():
+        for folder in [app.config['UPLOAD_FOLDER_PHOTOS'], app.config['UPLOAD_FOLDER_AUDIO'], app.config['UPLOAD_FOLDER_FILES']]:
+            if not os.path.exists(folder):
+                os.makedirs(folder)
+
+        # Create database tables
         db.create_all()
 
     from routes.auth import auth_bp
