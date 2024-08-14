@@ -5,7 +5,7 @@ from flask_jwt_extended import jwt_required
 
 uploads_bp = Blueprint('uploads', __name__)
 
-ALLOWED_PHOTO_EXTENSIONS = {'jpg', 'jpeg', 'png', 'gif'}
+ALLOWED_PHOTO_EXTENSIONS = {'jpg', 'jpeg', 'png', 'gif', 'mp4', 'avi', 'mpeg'}  # photo&video
 ALLOWED_AUDIO_EXTENSIONS = {'mp3', 'wav', 'ogg'}
 ALLOWED_FILE_EXTENSIONS = {'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx'}
 
@@ -76,3 +76,25 @@ def get_file(folder, filename):
         return jsonify({'error': 'Invalid folder'}), 400
 
     return send_from_directory(folder_mapping[folder], filename)
+
+
+@uploads_bp.route('/files/<folder>/<filename>', methods=['DELETE'])
+@jwt_required()
+def delete_file(folder, filename):
+    folder_mapping = {
+        'photos': current_app.config['UPLOAD_FOLDER_PHOTOS'],
+        'audio': current_app.config['UPLOAD_FOLDER_AUDIO'],
+        'files': current_app.config['UPLOAD_FOLDER_FILES']
+    }
+    if folder not in folder_mapping:
+        return jsonify({'error': 'Invalid folder'}), 400
+
+    file_path = os.path.join(folder_mapping[folder], filename)
+    if not os.path.exists(file_path):
+        return jsonify({'error': 'File not found'}), 404
+
+    try:
+        os.remove(file_path)
+        return jsonify({'message': 'File deleted successfully'}), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
