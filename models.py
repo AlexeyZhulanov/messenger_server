@@ -71,7 +71,12 @@ class Message(db.Model):
     file = db.Column(db.String)
     is_read = db.Column(db.Boolean, default=False)
     is_edited = db.Column(db.Boolean, default=False)
+    is_forwarded = db.Column(db.Boolean, default=False)
     timestamp = db.Column(db.DateTime, server_default=func.now())
+    reference_to_message_id = db.Column(db.Integer, db.ForeignKey('message.id'))
+    username_author_original = db.Column(db.String(50))
+
+    reference_to_message = db.relationship('Message', remote_side=[id], post_update=True)
 
 
 class Group(db.Model):
@@ -102,4 +107,10 @@ class GroupMessage(db.Model):
     voice = db.Column(db.String)
     file = db.Column(db.String)
     is_read = db.Column(db.Boolean, default=False)
+    is_edited = db.Column(db.Boolean, default=False)
+    is_forwarded = db.Column(db.Boolean, default=False)
     timestamp = db.Column(db.DateTime, server_default=func.now())
+    reference_to_message_id = db.Column(db.Integer, db.ForeignKey('group_message.id'))
+    username_author_original = db.Column(db.String(50))
+
+    reference_to_message = db.relationship('GroupMessage', remote_side=[id], post_update=True)

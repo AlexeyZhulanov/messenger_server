@@ -49,6 +49,9 @@ def send_group_message(group_id):
         images = data.get('images')
         voice = data.get('voice')
         file = data.get('file')
+        reference_to_message_id = data.get('reference_to_message_id')
+        is_forwarded = data.get('is_forwarded')
+        username_author_original = data.get('username_author_original')
 
         # Проверка на участие пользователя в группе
         group = Group.query.get(group_id)
@@ -63,7 +66,11 @@ def send_group_message(group_id):
             text=text,
             images=images,
             voice=voice,
-            file=file
+            file=file,
+            is_edited=False,
+            is_forwarded=is_forwarded,
+            username_author_original=username_author_original,
+            reference_to_message_id=reference_to_message_id
         )
         db.session.add(message)
         db.session.commit()
@@ -96,8 +103,11 @@ def get_group_messages():
         if start is None or end is None:
             return jsonify({'error': 'group_id, start, and end parameters are required'}), 400
 
-        if start < 0 or end <= start:
+        if start < 0:
             return jsonify({'error': 'Invalid start or end values'}), 400
+
+        if end == -1:
+            end = None
 
         messages = GroupMessage.query.filter_by(group_id=group_id).order_by(GroupMessage.timestamp.asc()).slice(start, end).all()
 
@@ -112,7 +122,10 @@ def get_group_messages():
                 "file": msg.file,
                 "is_read": msg.is_read,
                 "is_edited": msg.is_edited,
-                "timestamp": msg.timestamp
+                "timestamp": msg.timestamp,
+                "reference_to_message_id": msg.reference_to_message_id,
+                "is_forwarded": msg.is_forwarded,
+                "username_author_original": msg.username_author_original
             }
             for msg in messages
         ]
@@ -493,7 +506,10 @@ def search_messages_in_group(group_id):
         "file": msg.file,
         "is_read": msg.is_read,
         "is_edited": msg.is_edited,
-        "timestamp": msg.timestamp
+        "timestamp": msg.timestamp,
+        "reference_to_message_id": msg.reference_to_message_id,
+        "is_forwarded": msg.is_forwarded,
+        "username_author_original": msg.username_author_original
     }
      for msg in messages]
 

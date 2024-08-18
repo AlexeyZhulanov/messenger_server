@@ -55,7 +55,9 @@ def send_message():
         images = data.get('images')
         voice = data.get('voice')
         file = data.get('file')
-
+        reference_to_message_id = data.get('reference_to_message_id')
+        is_forwarded = data.get('is_forwarded')
+        username_author_original = data.get('username_author_original')
         # Проверка на существование диалога
         dialog = Dialog.query.get(id_dialog)
         if not dialog:
@@ -73,7 +75,10 @@ def send_message():
             images=images,
             voice=voice,
             file=file,
-            is_edited=False
+            is_edited=False,
+            is_forwarded=is_forwarded,
+            username_author_original=username_author_original,
+            reference_to_message_id=reference_to_message_id
         )
         db.session.add(message)
         db.session.commit()
@@ -106,11 +111,14 @@ def get_messages():
         if start is None or end is None:
             return jsonify({'error': 'id_dialog, start, and end parameters are required'}), 400
 
-        if start < 0 or end <= start:
+        if start < 0:
             return jsonify({'error': 'Invalid start or end values'}), 400
 
+        if end == -1:
+            end = None
+
         messages = Message.query.filter_by(id_dialog=id_dialog).order_by(Message.timestamp.asc()).slice(start,
-                                                                                                         end).all()
+                                                                                                        end).all()
 
         messages_data = [
             {
@@ -123,7 +131,10 @@ def get_messages():
                 "file": msg.file,
                 "is_read": msg.is_read,
                 "is_edited": msg.is_edited,
-                "timestamp": msg.timestamp
+                "timestamp": msg.timestamp,
+                "reference_to_message_id": msg.reference_to_message_id,
+                "is_forwarded": msg.is_forwarded,
+                "username_author_original": msg.username_author_original
             }
             for msg in messages
         ]
@@ -338,7 +349,10 @@ def search_messages_in_dialog(dialog_id):
         "file": message.file,
         "is_read": message.is_read,
         "is_edited": message.is_edited,
-        "timestamp": message.timestamp
+        "timestamp": message.timestamp,
+        "reference_to_message_id": message.reference_to_message_id,
+        "is_forwarded": message.is_forwarded,
+        "username_author_original": message.username_author_original
     } for message in messages]
 
     return jsonify(message_list), 200
