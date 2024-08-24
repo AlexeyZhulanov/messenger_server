@@ -105,20 +105,17 @@ def get_messages():
             return jsonify({"error": "You are not a participant in this dialog"}), 403
 
         # Пагинация
-        start = request.args.get('start', type=int)
-        end = request.args.get('end', type=int)
+        page = request.args.get('page', type=int)
+        size = request.args.get('size', type=int)
 
-        if start is None or end is None:
-            return jsonify({'error': 'id_dialog, start, and end parameters are required'}), 400
+        if page is None or size is None:
+            return jsonify({'error': 'id_dialog, page, and size parameters are required'}), 400
 
-        if start < 0:
-            return jsonify({'error': 'Invalid start or end values'}), 400
-
-        if end == -1:
-            end = None
-
-        messages = Message.query.filter_by(id_dialog=id_dialog).order_by(Message.timestamp.asc()).slice(start,
-                                                                                                        end).all()
+        query = Message.query.filter_by(id_dialog=id_dialog).order_by(Message.timestamp.asc())
+	      total_count = query.count()
+	      end = min(total_count, total_count - page * size)  
+	      start = max(0, total_count - (page + 1) * size)
+	      messages = query.slice(start, end).all()
 
         messages_data = [
             {
