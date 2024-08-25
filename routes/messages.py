@@ -112,10 +112,10 @@ def get_messages():
             return jsonify({'error': 'id_dialog, page, and size parameters are required'}), 400
 
         query = Message.query.filter_by(id_dialog=id_dialog).order_by(Message.timestamp.asc())
-	      total_count = query.count()
-	      end = min(total_count, total_count - page * size)  
-	      start = max(0, total_count - (page + 1) * size)
-	      messages = query.slice(start, end).all()
+	total_count = query.count()
+	end = min(total_count, total_count - page * size)  
+	start = max(0, total_count - (page + 1) * size)
+	messages = query.slice(start, end).all()
 
         messages_data = [
             {
