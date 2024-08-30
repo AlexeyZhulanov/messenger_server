@@ -142,6 +142,58 @@ def get_messages():
         return jsonify({'error': str(e)}), 500
 
 
+@messages_bp.route('/message/<int:message_id>', methods=['GET'])
+@jwt_required()
+def get_message_by_id(message_id):
+    try:
+        user_id = get_jwt_identity()
+
+        message = Message.query.get(message_id)
+        if not message:
+            return jsonify({"error": "Message not found"}), 404
+
+        dialog = Dialog.query.get(message.id_dialog)
+        if not dialog:
+            return jsonify({"error": "Dialog not found"}), 404
+        if dialog.id_user1 != user_id and dialog.id_user2 != user_id:
+            return jsonify({"error": "You are not a participant in this dialog"}), 403
+
+        all_messages = Message.query.filter_by(id_dialog=message.id_dialog).order_by(Message.timestamp.asc()).all()
+
+        # Определяем порядковый номер сообщения, отсчитывая с конца списка
+        message_position = None
+        total_messages = len(all_messages)
+        for index, msg in enumerate(all_messages):
+            if msg.id == message.id:
+                message_position = total_messages - index - 1  # Индексация с конца, начиная с нуля
+                break
+
+        if message_position is None:
+            return jsonify({"error": "Message not found in the dialog"}), 404
+
+        message_data = {
+            "id": message.id,
+            "id_sender": message.id_sender,
+            "id_dialog": message.id_dialog,
+            "text": message.text,
+            "images": message.images,
+            "voice": message.voice,
+            "file": message.file,
+            "is_read": message.is_read,
+            "is_edited": message.is_edited,
+            "timestamp": message.timestamp,
+            "reference_to_message_id": message.reference_to_message_id,
+            "is_forwarded": message.is_forwarded,
+            "username_author_original": message.username_author_original,
+            "position": message_position
+        }
+
+        return jsonify(message_data), 200
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 @messages_bp.route('/dialogs/<int:dialog_id>/key', methods=['PUT'])
 @jwt_required()
 def add_key_to_dialog(dialog_id):
