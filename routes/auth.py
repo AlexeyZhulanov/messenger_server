@@ -105,3 +105,31 @@ def get_last_session(user_id):
         return jsonify({"last_session": user.last_session}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+@auth_bp.route('/user/<int:user_id>', methods=['GET'])
+@jwt_required()
+def get_user(user_id):
+    try:
+        # Если передано -1, получаем текущего пользователя по токену
+        if user_id == -1:
+            current_user_id = get_jwt_identity()
+            user = User.query.get(current_user_id)
+        else:
+            user = User.query.get(user_id)
+
+        if not user:
+            return jsonify({"error": "User with given ID not found"}), 404
+
+        user_data = {
+            "id": user.id,
+            "name": user.name,
+            "username": user.username,
+            "avatar": user.avatar
+        }
+
+        return jsonify(user_data), 200
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+        
