@@ -111,8 +111,8 @@ def get_last_session(user_id):
 @jwt_required()
 def get_user(user_id):
     try:
-        # Если передано -1, получаем текущего пользователя по токену
-        if user_id == -1:
+        # Если передано 0, получаем текущего пользователя по токену
+        if user_id == 0:
             current_user_id = get_jwt_identity()
             user = User.query.get(current_user_id)
         else:
