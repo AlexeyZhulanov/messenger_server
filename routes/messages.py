@@ -95,7 +95,20 @@ def send_message():
         increment_message_count(dialog_id=id_dialog)
 
         # Уведомление участников через WebSocket
-        socketio.emit('new_message', {message}, broadcast=True)
+        socketio.emit('new_message', {
+            'id': message.id,
+            'id_dialog': message.id_dialog,
+            'id_sender': message.id_sender,
+            'text': message.text,
+            'images': message.images,
+            'voice': message.voice,
+            'file': message.file,
+            'is_edited': message.is_edited,
+            'is_forwarded': message.is_forwarded,
+            'username_author_original': message.username_author_original,
+            'reference_to_message_id': message.reference_to_message_id,
+            'timestamp': message.timestamp.isoformat()
+        }, broadcast=True)
 
         return jsonify({"message": "Message sent successfully"}), 201
     except Exception as e:
@@ -275,12 +288,18 @@ def edit_message(message_id):
 
         # Уведомление участников через WebSocket
         socketio.emit('message_edited', {
-            'message_id': message.id,
-            'dialog_id': message.id_dialog,
+            'id': message.id,
+            'id_dialog': message.id_dialog,
+            'id_sender': message.id_sender,
             'text': message.text,
             'images': message.images,
             'voice': message.voice,
-            'file': message.file
+            'file': message.file,
+            'is_edited': message.is_edited,
+            'is_forwarded': message.is_forwarded,
+            'username_author_original': message.username_author_original,
+            'reference_to_message_id': message.reference_to_message_id,
+            'timestamp': message.timestamp.isoformat()
         }, broadcast=True)
         
         return jsonify({'message': 'Message updated successfully'}), 200
