@@ -2,9 +2,11 @@ from flask import Flask
 from flask_jwt_extended import JWTManager
 from config import Config
 from models import db
+from flask_socketio import SocketIO
 import os
 
 app = Flask(__name__)
+socketio = SocketIO(app, cors_allowed_origins="*")  # Поддержка CORS для клиента
 
 
 def create_app():
@@ -37,4 +39,4 @@ def create_app():
 app = create_app()
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    socketio.run(app, debug=True)

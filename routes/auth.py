@@ -88,6 +88,13 @@ def update_last_session():
 
         user.last_session = datetime.now(timezone.utc)
         db.session.commit()
+
+        # Уведомление через WebSocket
+        socketio.emit('user_session_updated', {
+            'user_id': user_id,
+            'last_session': user.last_session.isoformat()
+        }, broadcast=True)
+
         return jsonify({"message": "Last session time updated successfully"}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500

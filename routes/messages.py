@@ -2,6 +2,9 @@ from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from models import (db, Message, Dialog, User, Group, GroupMessage, GroupMember, increment_message_count,
                     decrement_message_count)
+from flask_socketio import emit, join_room, leave_room
+from app import socketio
+
 
 messages_bp = Blueprint('messages', __name__)
 
@@ -40,6 +43,12 @@ def create_dialog():
     db.session.add(creation_message)
     db.session.commit()
     increment_message_count(dialog_id=new_dialog.id)
+
+    # Уведомление участников через WebSocket
+    socketio.emit('dialog_created', {
+        'dialog_id': new_dialog.id,
+        'message': f"Dialog created between {user.username} and {other_user.username}"
+    }, broadcast=True)
 
     return jsonify({'message': 'Dialog created successfully'}), 201
 
@@ -84,6 +93,9 @@ def send_message():
         db.session.commit()
 
         increment_message_count(dialog_id=id_dialog)
+
+        # Уведомление участников через WebSocket
+        socketio.emit('new_message', {message}, broadcast=True)
 
         return jsonify({"message": "Message sent successfully"}), 201
     except Exception as e:
@@ -260,6 +272,17 @@ def edit_message(message_id):
             message.file = data['file']
 
         db.session.commit()
+
+        # Уведомление участников через WebSocket
+        socketio.emit('message_edited', {
+            'message_id': message.id,
+            'dialog_id': message.id_dialog,
+            'text': message.text,
+            'images': message.images,
+            'voice': message.voice,
+            'file': message.file
+        }, broadcast=True)
+        
         return jsonify({'message': 'Message updated successfully'}), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -292,6 +315,13 @@ def delete_messages():
         decrement_message_count(dialog_id=messages[0].id_dialog, count=len(messages))
 
         db.session.commit()
+
+         # Уведомление участников через WebSocket
+        socketio.emit('messages_deleted', {
+            'dialog_id': messages[0].id_dialog,
+            'deleted_message_ids': message_ids
+        }, broadcast=True)
+
         return jsonify({"message": "Messages deleted successfully"}), 200
     except Exception as e:
         db.session.rollback()  # Откат транзакции в случае ошибки
@@ -312,6 +342,12 @@ def delete_dialog(dialog_id):
 
         db.session.delete(dialog)
         db.session.commit()
+
+        # Уведомление участников через WebSocket
+        socketio.emit('dialog_deleted', {
+            'dialog_id': dialog_id
+        }, broadcast=True)
+
         return jsonify({"message": "Dialog deleted successfully"}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -558,3 +594,65 @@ def get_dialog_settings(dialog_id):
         }), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+@socketio.on('typing')
+@jwt_required()
+def handle_typing_event(data):
+    """
+    Обрабатывает событие начала набора текста.
+    :param data: данные о диалоге и пользователе, который набирает текст.
+    """
+    dialog_id = data.get('dialog_id')
+    user_id = get_jwt_identity()
+
+    if dialog_id:
+        # Отправляем событие "typing" всем участникам диалога
+        emit('typing', {'dialog_id': dialog_id, 'user_id': user_id}, room=f'dialog_{dialog_id}', broadcast=True)
+
+
+@socketio.on('stop_typing')
+@jwt_required()
+def handle_stop_typing_event(data):
+    """
+    Обрабатывает событие завершения набора текста.
+    :param data: данные о диалоге и пользователе, который прекратил набор текста.
+    """
+    dialog_id = data.get('dialog_id')
+    user_id = get_jwt_identity()
+
+    if dialog_id:
+        # Отправляем событие "stop_typing" всем участникам диалога
+        emit('stop_typing', {'dialog_id': dialog_id, 'user_id': user_id}, room=f'dialog_{dialog_id}', broadcast=True)
+
+
+@socketio.on('join_dialog')
+@jwt_required()
+def handle_join_dialog(data):
+    """
+    Обрабатывает событие присоединения к диалогу.
+    :param data: данные о диалоге.
+    """
+    dialog_id = data.get('dialog_id')
+    user_id = get_jwt_identity()
+
+    if dialog_id:
+        # Присоединяем пользователя к комнате, соответствующей диалогу
+        join_room(f'dialog_{dialog_id}')
+        emit('user_joined', {'dialog_id': dialog_id, 'user_id': user_id}, room=f'dialog_{dialog_id}')
+
+
+@socketio.on('leave_dialog')
+@jwt_required()
+def handle_leave_dialog(data):
+    """
+    Обрабатывает событие выхода из диалога.
+    :param data: данные о диалоге.
+    """
+    dialog_id = data.get('dialog_id')
+    user_id = get_jwt_identity()
+
+    if dialog_id:
+        # Удаляем пользователя из комнаты, соответствующей диалогу
+        leave_room(f'dialog_{dialog_id}')
+        emit('user_left', {'dialog_id': dialog_id, 'user_id': user_id}, room=f'dialog_{dialog_id}')
