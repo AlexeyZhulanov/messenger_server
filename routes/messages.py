@@ -48,7 +48,7 @@ def create_dialog():
     socketio.emit('dialog_created', {
         'dialog_id': new_dialog.id,
         'message': f"Dialog created between {user.username} and {other_user.username}"
-    }, broadcast=True)
+    }, room=f'dialog_{new_dialog.id}')
 
     return jsonify({'message': 'Dialog created successfully'}), 201
 
@@ -108,7 +108,7 @@ def send_message():
             'username_author_original': message.username_author_original,
             'reference_to_message_id': message.reference_to_message_id,
             'timestamp': message.timestamp.isoformat()
-        }, broadcast=True)
+        }, room=f'dialog_{message.id_dialog}')
 
         return jsonify({"message": "Message sent successfully"}), 201
     except Exception as e:
@@ -300,7 +300,7 @@ def edit_message(message_id):
             'username_author_original': message.username_author_original,
             'reference_to_message_id': message.reference_to_message_id,
             'timestamp': message.timestamp.isoformat()
-        }, broadcast=True)
+        }, room=f'dialog_{message.id_dialog}')
         
         return jsonify({'message': 'Message updated successfully'}), 200
     except Exception as e:
@@ -339,7 +339,7 @@ def delete_messages():
         socketio.emit('messages_deleted', {
             'dialog_id': messages[0].id_dialog,
             'deleted_message_ids': message_ids
-        }, broadcast=True)
+        }, room=f'dialog_{messages[0].id_dialog}')
 
         return jsonify({"message": "Messages deleted successfully"}), 200
     except Exception as e:
@@ -365,7 +365,7 @@ def delete_dialog(dialog_id):
         # Уведомление участников через WebSocket
         socketio.emit('dialog_deleted', {
             'dialog_id': dialog_id
-        }, broadcast=True)
+        }, room=f'dialog_{dialog_id}')
 
         return jsonify({"message": "Dialog deleted successfully"}), 200
     except Exception as e:
@@ -425,7 +425,7 @@ def mark_messages_as_read():
         socketio.emit('messages_read', {
             'dialog_id': messages[0].id_dialog,
             'messages_read_ids': message_ids
-        }, broadcast=True)
+        }, room=f'dialog_{messages[0].id_dialog}')
 
         return jsonify({"message": "Messages marked as read successfully"}), 200
     except Exception as e:
