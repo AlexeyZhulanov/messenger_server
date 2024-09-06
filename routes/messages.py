@@ -600,7 +600,7 @@ def delete_dialog_messages(dialog_id):
         # Уведомление участников через WebSocket
         socketio.emit('dialog_messages_all_deleted', {
             'dialog_id': dialog_id
-        }, broadcast=True)
+        }, room=f'dialog_{dialog_id}')
 
         return jsonify({"message": "All messages in the dialog deleted successfully"}), 200
     except Exception as e:
