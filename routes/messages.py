@@ -335,7 +335,7 @@ def delete_messages():
 
         db.session.commit()
 
-         # Уведомление участников через WebSocket
+        # Уведомление участников через WebSocket
         socketio.emit('messages_deleted', {
             'dialog_id': messages[0].id_dialog,
             'deleted_message_ids': message_ids
@@ -420,6 +420,13 @@ def mark_messages_as_read():
             message.is_read = True
 
         db.session.commit()
+
+        # Уведомление участников через WebSocket
+        socketio.emit('messages_read', {
+            'dialog_id': messages[0].id_dialog,
+            'messages_read_ids': message_ids
+        }, broadcast=True)
+
         return jsonify({"message": "Messages marked as read successfully"}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -589,6 +596,12 @@ def delete_dialog_messages(dialog_id):
 
         Message.query.filter_by(id_dialog=dialog_id).delete()
         db.session.commit()
+
+        # Уведомление участников через WebSocket
+        socketio.emit('dialog_messages_all_deleted', {
+            'dialog_id': dialog_id
+        }, broadcast=True)
+
         return jsonify({"message": "All messages in the dialog deleted successfully"}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500

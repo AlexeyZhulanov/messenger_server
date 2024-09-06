@@ -2,6 +2,7 @@ Flask
 Flask-SQLAlchemy
 Flask-Bcrypt
 Flask-JWT-Extended
+Flask-SocketIO
 werkzeug
 sqlalchemy
 gunicorn
