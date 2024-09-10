@@ -1,9 +1,9 @@
 from flask import Blueprint, request, jsonify
-from flask_jwt_extended import jwt_required, get_jwt_identity
+from flask_jwt_extended import jwt_required, get_jwt_identity, decode_token
+from flask_socketio import emit, join_room, leave_room, disconnect
 from models import (db, Message, Dialog, User, Group, GroupMessage, GroupMember, increment_message_count,
                     decrement_message_count)
-from flask_socketio import emit, join_room, leave_room
-from app import socketio
+from app import socketio, logger
 
 
 messages_bp = Blueprint('messages', __name__)
@@ -67,6 +67,7 @@ def send_message():
         reference_to_message_id = data.get('reference_to_message_id')
         is_forwarded = data.get('is_forwarded')
         username_author_original = data.get('username_author_original')
+
         # Проверка на существование диалога
         dialog = Dialog.query.get(id_dialog)
         if not dialog:
@@ -109,6 +110,7 @@ def send_message():
             'reference_to_message_id': message.reference_to_message_id,
             'timestamp': message.timestamp.isoformat()
         }, room=f'dialog_{message.id_dialog}')
+        logger.info(f"Message {message.id} emitted to dialog {id_dialog}")
 
         return jsonify({"message": "Message sent successfully"}), 201
     except Exception as e:
@@ -137,10 +139,10 @@ def get_messages():
             return jsonify({'error': 'id_dialog, page, and size parameters are required'}), 400
 
         query = Message.query.filter_by(id_dialog=id_dialog).order_by(Message.timestamp.asc())
-	total_count = query.count()
-	end = min(total_count, total_count - page * size)  
-	start = max(0, total_count - (page + 1) * size)
-	messages = query.slice(start, end).all()
+        total_count = query.count()
+        end = min(total_count, total_count - page * size)
+        start = max(0, total_count - (page + 1) * size)
+        messages = query.slice(start, end).all()
 
         messages_data = [
             {
@@ -301,7 +303,7 @@ def edit_message(message_id):
             'reference_to_message_id': message.reference_to_message_id,
             'timestamp': message.timestamp.isoformat()
         }, room=f'dialog_{message.id_dialog}')
-        
+
         return jsonify({'message': 'Message updated successfully'}), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -450,7 +452,8 @@ def search_messages_in_dialog(dialog_id):
 
     messages = Message.query.filter(Message.id_dialog == dialog_id, Message.text.ilike(f'%{search_text}%')).all()
 
-    message_list = [{
+    message_list = [
+    {
         "id": message.id,
         "id_sender": message.id_sender,
         "id_dialog": message.id_dialog,
@@ -659,23 +662,40 @@ def handle_stop_typing_event(data):
 
 
 @socketio.on('join_dialog')
-@jwt_required()
 def handle_join_dialog(data):
     """
     Обрабатывает событие присоединения к диалогу.
     :param data: данные о диалоге.
     """
-    dialog_id = data.get('dialog_id')
-    user_id = get_jwt_identity()
+    logger.info(f"Receiver join_dialog with data: {data}")
+    token = request.headers.get('Authorization')
+    if token and token.startswith("Bearer "):
+        token = token.split("Bearer ")[1]
+    else:
+        logger.info("Missing or invalid Authorization header")
+        disconnect()
+        return
 
-    if dialog_id:
-        # Присоединяем пользователя к комнате, соответствующей диалогу
-        join_room(f'dialog_{dialog_id}')
-        emit('user_joined', {'dialog_id': dialog_id, 'user_id': user_id}, room=f'dialog_{dialog_id}')
+    try:
+        # Декодируем токен и получаем информацию о пользователе
+        decoded_token = decode_token(token)
+        user_id = decoded_token['sub']  # Извлекаем user_id из токена
+        logger.info(f"Decoded user_id: {user_id}")
+
+        dialog_id = data.get('dialog_id')
+        logger.info(f"Dialog ID: {dialog_id}")
+
+        if dialog_id:
+            # Присоединяем пользователя к комнате, соответствующей диалогу
+            join_room(f'dialog_{dialog_id}')
+            emit('user_joined', {'dialog_id': dialog_id, 'user_id': user_id}, room=f'dialog_{dialog_id}')
+            logger.info(f"Dialog ID: {dialog_id}")
+    except Exception as e:
+        logger.info(f"Invalid token: {e}")
+        disconnect()  # Разрываем соединение в случае невалидного токена
 
 
 @socketio.on('leave_dialog')
-@jwt_required()
 def handle_leave_dialog(data):
     """
     Обрабатывает событие выхода из диалога.

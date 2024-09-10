@@ -4,8 +4,11 @@ from config import Config
 from models import db
 from flask_socketio import SocketIO
 import os
+import logging
 
 app = Flask(__name__)
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 socketio = SocketIO(app, cors_allowed_origins="*")  # Поддержка CORS для клиента
 
 
@@ -39,4 +42,4 @@ def create_app():
 app = create_app()
 
 if __name__ == '__main__':
-    socketio.run(app, debug=True)
+    socketio.run(app, debug=True, host='0.0.0.0', port=5000, use_reloader=False)

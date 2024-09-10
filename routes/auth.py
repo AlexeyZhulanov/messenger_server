@@ -4,6 +4,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from models import db, User
 from flask_socketio import emit
 from datetime import datetime, timezone
+from app import logger
 
 auth_bp = Blueprint('auth', __name__)
 
@@ -16,7 +17,7 @@ def register():
 
         if existing_user:
             return jsonify({'error': 'User with this name already exists'}), 400
-        
+
         hashed_password = generate_password_hash(data['password'], method='pbkdf2:sha256')
         new_user = User(name=data['name'], password=hashed_password, username=data['username'])
         db.session.add(new_user)
@@ -140,4 +141,3 @@ def get_user(user_id):
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-        
