@@ -108,9 +108,8 @@ def send_message():
             'is_forwarded': message.is_forwarded,
             'username_author_original': message.username_author_original,
             'reference_to_message_id': message.reference_to_message_id,
-            'timestamp': message.timestamp.isoformat()
+            'timestamp': int(message.timestamp.timestamp() * 1000)
         }, room=f'dialog_{message.id_dialog}')
-        logger.info(f"Message {message.id} emitted to dialog {id_dialog}")
 
         return jsonify({"message": "Message sent successfully"}), 201
     except Exception as e:
@@ -301,7 +300,7 @@ def edit_message(message_id):
             'is_forwarded': message.is_forwarded,
             'username_author_original': message.username_author_original,
             'reference_to_message_id': message.reference_to_message_id,
-            'timestamp': message.timestamp.isoformat()
+            'timestamp': int(message.timestamp.timestamp() * 1000)
         }, room=f'dialog_{message.id_dialog}')
 
         return jsonify({'message': 'Message updated successfully'}), 200
@@ -632,33 +631,59 @@ def get_dialog_settings(dialog_id):
 
 
 @socketio.on('typing')
-@jwt_required()
 def handle_typing_event(data):
     """
     Обрабатывает событие начала набора текста.
     :param data: данные о диалоге и пользователе, который набирает текст.
     """
-    dialog_id = data.get('dialog_id')
-    user_id = get_jwt_identity()
+    token = request.headers.get('Authorization')
+    if token and token.startswith("Bearer "):
+        token = token.split("Bearer ")[1]
+    else:
+        logger.info("Missing or invalid Authorization header")
+        disconnect()
+        return
 
-    if dialog_id:
-        # Отправляем событие "typing" всем участникам диалога
-        emit('typing', {'dialog_id': dialog_id, 'user_id': user_id}, room=f'dialog_{dialog_id}', broadcast=True)
+    try:
+        # Декодируем токен и получаем информацию о пользователе
+        decoded_token = decode_token(token)
+        user_id = decoded_token['sub']
+
+        dialog_id = data.get('dialog_id')
+
+        if dialog_id:
+            emit('typing', {'dialog_id': dialog_id, 'user_id': user_id}, room=f'dialog_{dialog_id}')
+    except Exception as e:
+        logger.info(f"Invalid token: {e}")
+        disconnect()
 
 
 @socketio.on('stop_typing')
-@jwt_required()
 def handle_stop_typing_event(data):
     """
     Обрабатывает событие завершения набора текста.
     :param data: данные о диалоге и пользователе, который прекратил набор текста.
     """
-    dialog_id = data.get('dialog_id')
-    user_id = get_jwt_identity()
+    token = request.headers.get('Authorization')
+    if token and token.startswith("Bearer "):
+        token = token.split("Bearer ")[1]
+    else:
+        logger.info("Missing or invalid Authorization header")
+        disconnect()
+        return
 
-    if dialog_id:
-        # Отправляем событие "stop_typing" всем участникам диалога
-        emit('stop_typing', {'dialog_id': dialog_id, 'user_id': user_id}, room=f'dialog_{dialog_id}', broadcast=True)
+    try:
+        # Декодируем токен и получаем информацию о пользователе
+        decoded_token = decode_token(token)
+        user_id = decoded_token['sub']
+
+        dialog_id = data.get('dialog_id')
+
+        if dialog_id:
+            emit('stop_typing', {'dialog_id': dialog_id, 'user_id': user_id}, room=f'dialog_{dialog_id}')
+    except Exception as e:
+        logger.info(f"Invalid token: {e}")
+        disconnect()
 
 
 @socketio.on('join_dialog')
@@ -667,7 +692,6 @@ def handle_join_dialog(data):
     Обрабатывает событие присоединения к диалогу.
     :param data: данные о диалоге.
     """
-    logger.info(f"Receiver join_dialog with data: {data}")
     token = request.headers.get('Authorization')
     if token and token.startswith("Bearer "):
         token = token.split("Bearer ")[1]
@@ -680,16 +704,14 @@ def handle_join_dialog(data):
         # Декодируем токен и получаем информацию о пользователе
         decoded_token = decode_token(token)
         user_id = decoded_token['sub']  # Извлекаем user_id из токена
-        logger.info(f"Decoded user_id: {user_id}")
 
         dialog_id = data.get('dialog_id')
-        logger.info(f"Dialog ID: {dialog_id}")
 
         if dialog_id:
             # Присоединяем пользователя к комнате, соответствующей диалогу
             join_room(f'dialog_{dialog_id}')
             emit('user_joined', {'dialog_id': dialog_id, 'user_id': user_id}, room=f'dialog_{dialog_id}')
-            logger.info(f"Dialog ID: {dialog_id}")
+            logger.info(f"Joined Dialog ID: {dialog_id}")
     except Exception as e:
         logger.info(f"Invalid token: {e}")
         disconnect()  # Разрываем соединение в случае невалидного токена
@@ -701,10 +723,25 @@ def handle_leave_dialog(data):
     Обрабатывает событие выхода из диалога.
     :param data: данные о диалоге.
     """
-    dialog_id = data.get('dialog_id')
-    user_id = get_jwt_identity()
+    token = request.headers.get('Authorization')
+    if token and token.startswith("Bearer "):
+        token = token.split("Bearer ")[1]
+    else:
+        logger.info("Missing or invalid Authorization header")
+        disconnect()
+        return
 
-    if dialog_id:
-        # Удаляем пользователя из комнаты, соответствующей диалогу
-        leave_room(f'dialog_{dialog_id}')
-        emit('user_left', {'dialog_id': dialog_id, 'user_id': user_id}, room=f'dialog_{dialog_id}')
+    try:
+        # Декодируем токен и получаем информацию о пользователе
+        decoded_token = decode_token(token)
+        user_id = decoded_token['sub']
+
+        dialog_id = data.get('dialog_id')
+        logger.info(f"Left Dialog ID: {dialog_id}")
+
+        if dialog_id:
+            leave_room(f'dialog_{dialog_id}')
+            emit('user_left', {'dialog_id': dialog_id, 'user_id': user_id}, room=f'dialog_{dialog_id}')
+    except Exception as e:
+        logger.info(f"Invalid token: {e}")
+        disconnect()
