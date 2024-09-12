@@ -4,6 +4,7 @@ from flask_socketio import emit, join_room, leave_room, disconnect
 from models import (db, Message, Dialog, User, Group, GroupMessage, GroupMember, increment_message_count,
                     decrement_message_count)
 from app import socketio, logger
+from jwt.exceptions import ExpiredSignatureError
 
 
 messages_bp = Blueprint('messages', __name__)
@@ -712,6 +713,10 @@ def handle_join_dialog(data):
             join_room(f'dialog_{dialog_id}')
             emit('user_joined', {'dialog_id': dialog_id, 'user_id': user_id}, room=f'dialog_{dialog_id}')
             logger.info(f"Joined Dialog ID: {dialog_id}")
+    except ExpiredSignatureError:
+        logger.info("Token expired")
+        emit('token_expired', {'message': 'Token has expired'})
+        disconnect()  # Разрываем соединение
     except Exception as e:
         logger.info(f"Invalid token: {e}")
         disconnect()  # Разрываем соединение в случае невалидного токена
