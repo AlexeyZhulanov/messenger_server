@@ -108,7 +108,7 @@ def send_message():
             'is_forwarded': message.is_forwarded,
             'username_author_original': message.username_author_original,
             'reference_to_message_id': message.reference_to_message_id,
-            'timestamp': int(message.timestamp.timestamp() * 1000)
+            'timestamp': int(message.timestamp.timestamp() * 1000 + 10800000)
         }, room=f'dialog_{message.id_dialog}')
 
         return jsonify({"message": "Message sent successfully"}), 201
@@ -300,7 +300,7 @@ def edit_message(message_id):
             'is_forwarded': message.is_forwarded,
             'username_author_original': message.username_author_original,
             'reference_to_message_id': message.reference_to_message_id,
-            'timestamp': int(message.timestamp.timestamp() * 1000)
+            'timestamp': int(message.timestamp.timestamp() * 1000 + 10800000)
         }, room=f'dialog_{message.id_dialog}')
 
         return jsonify({'message': 'Message updated successfully'}), 200
