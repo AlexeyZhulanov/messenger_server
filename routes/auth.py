@@ -4,7 +4,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from models import db, User
 from flask_socketio import emit
 from datetime import datetime, timezone
-from app import logger
+from app import logger, socketio
 
 auth_bp = Blueprint('auth', __name__)
 
@@ -79,9 +79,9 @@ def update_password():
         return jsonify({"error": str(e)}), 500
 
 
-@auth_bp.route('/update_last_session', methods=['PUT'])
+@auth_bp.route('/update_last_session/<int:id_dialog>', methods=['PUT'])
 @jwt_required()
-def update_last_session():
+def update_last_session(id_dialog):
     user_id = get_jwt_identity()
     try:
         user = User.query.get(user_id)
@@ -94,8 +94,8 @@ def update_last_session():
         # Уведомление через WebSocket
         socketio.emit('user_session_updated', {
             'user_id': user_id,
-            'last_session': user.last_session.isoformat()
-        }, broadcast=True)
+            'last_session': int(user.last_session.timestamp() * 1000 + 10800000)
+        }, room=f'dialog_{id_dialog}')
 
         return jsonify({"message": "Last session time updated successfully"}), 200
     except Exception as e:
