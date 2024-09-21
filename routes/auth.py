@@ -52,6 +52,10 @@ def update_profile():
         data = request.get_json()
         user.username = data.get('username', user.username)
         user.avatar = data.get('avatar', user.avatar)
+        if avatar == "delete":
+            user.avatar = None
+        else:
+            user.avatar = avatar
         db.session.commit()
         return jsonify({'message': 'Profile updated successfully'}), 200
     except Exception as e:
