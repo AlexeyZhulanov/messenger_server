@@ -51,7 +51,7 @@ def update_profile():
 
         data = request.get_json()
         user.username = data.get('username', user.username)
-        user.avatar = data.get('avatar', user.avatar)
+        avatar = data.get('avatar', user.avatar)
         if avatar == "delete":
             user.avatar = None
         else:
@@ -72,7 +72,7 @@ def update_password():
             return jsonify({"error": "User not found"}), 404
 
         data = request.get_json()
-        new_password = data.get('new_password')
+        new_password = data.get('password')
         if not new_password:
             return jsonify({"error": "No new password provided"}), 400
 
