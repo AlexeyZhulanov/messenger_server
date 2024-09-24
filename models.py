@@ -55,6 +55,7 @@ class Dialog(db.Model):
     count_msg = db.Column(db.Integer, default=0)
     can_delete = db.Column(db.Boolean, default=False)
     auto_delete_interval = db.Column(db.Integer, default=0)
+    notifications = db.Column(db.Boolean, default=True)
 
     messages = db.relationship('Message', backref='dialog', lazy=True)
 
@@ -87,6 +88,7 @@ class Group(db.Model):
     count_msg = db.Column(db.Integer, default=0)
     can_delete = db.Column(db.Boolean, default=False)
     auto_delete_interval = db.Column(db.Integer, default=0)
+    notifications = db.Column(db.Boolean, default=True)
 
     members = db.relationship('GroupMember', backref='group', lazy=True)
     messages = db.relationship('GroupMessage', backref='group', lazy=True)
