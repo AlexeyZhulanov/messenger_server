@@ -554,7 +554,7 @@ def toggle_dialog_can_delete(dialog_id):
             return jsonify({"error": "Dialog not found"}), 404
 
         # Проверка, что пользователь является участником диалога
-        if user_id not in dialog.participants:
+        if dialog.id_user1 != user_id and dialog.id_user2 != user_id:
             return jsonify({"error": "You are not a participant in this dialog"}), 403
 
         dialog.can_delete = not dialog.can_delete
@@ -577,7 +577,7 @@ def update_dialog_auto_delete_interval(dialog_id):
             return jsonify({"error": "Dialog not found"}), 404
 
         # Проверка, что пользователь является участником диалога
-        if user_id not in dialog.participants:
+        if dialog.id_user1 != user_id and dialog.id_user2 != user_id:
             return jsonify({"error": "You are not a participant in this dialog"}), 403
 
         dialog.auto_delete_interval = auto_delete_interval
@@ -598,7 +598,7 @@ def delete_dialog_messages(dialog_id):
             return jsonify({"error": "Dialog not found"}), 404
 
         # Проверка, что пользователь является участником диалога
-        if user_id not in dialog.participants:
+        if dialog.id_user1 != user_id and dialog.id_user2 != user_id:
             return jsonify({"error": "You are not a participant in this dialog"}), 403
 
         Message.query.filter_by(id_dialog=dialog_id).delete()
