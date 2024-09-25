@@ -3,7 +3,7 @@ from flask_jwt_extended import jwt_required, get_jwt_identity, decode_token
 from flask_socketio import emit, join_room, leave_room, disconnect
 from models import (db, Message, Dialog, User, Group, GroupMessage, GroupMember, increment_message_count,
                     decrement_message_count)
-from uploads import delete_file_from_disk
+from .uploads import delete_file_from_disk
 from app import socketio, logger
 from jwt.exceptions import ExpiredSignatureError
 

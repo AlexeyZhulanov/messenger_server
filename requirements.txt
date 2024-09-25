@@ -6,3 +6,4 @@ Flask-SocketIO
 werkzeug
 sqlalchemy
 gunicorn
+eventlet
