@@ -414,23 +414,6 @@ def toggle_group_can_delete(group_id):
         return jsonify({"error": str(e)}), 500
 
 
-@groups_bp.route('/groups/<int:group_id>/toggle_notifications', methods=['PUT'])
-@jwt_required()
-def toggle_group_notifications(group_id):
-    try:
-        user_id = get_jwt_identity()
-        group = Group.query.get(group_id)
-        if not group:
-            return jsonify({"error": "Group not found"}), 404
-        if user_id not in group.members:
-            return jsonify({"error": "You are not a member of this group"}), 403
-        group.notifications = not group.notifications
-        db.session.commit()
-        return jsonify({"message": "Group notifications flag updated successfully", "notifications": group.notifications}), 200
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
 @groups_bp.route('/groups/<int:group_id>/update_auto_delete_interval', methods=['PUT'])
 @jwt_required()
 def update_group_auto_delete_interval(group_id):

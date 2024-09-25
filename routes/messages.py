@@ -503,7 +503,6 @@ def get_conversations():
                 },
                 "count_msg": dialog.count_msg,
                 "can_delete": dialog.can_delete,
-                "notifications": dialog.notifications,
                 "auto_delete_interval": dialog.auto_delete_interval
             }
             dialog_list.append(dialog_data)
@@ -531,7 +530,6 @@ def get_conversations():
                 },
                 "count_msg": group.count_msg,
                 "can_delete": group.can_delete,
-                "notifications": group.notifications,
                 "auto_delete_interval": group.auto_delete_interval
             }
             group_list.append(group_data)
@@ -562,26 +560,6 @@ def toggle_dialog_can_delete(dialog_id):
         dialog.can_delete = not dialog.can_delete
         db.session.commit()
         return jsonify({"message": "Dialog can_delete flag updated successfully", "can_delete": dialog.can_delete}), 200
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@messages_bp.route('/dialogs/<int:dialog_id>/toggle_notifications', methods=['PUT'])
-@jwt_required()
-def toggle_dialog_notifications(dialog_id):
-    try:
-        user_id = get_jwt_identity()
-        dialog = Dialog.query.get(dialog_id)
-        if not dialog:
-            return jsonify({"error": "Dialog not found"}), 404
-
-        # Проверка, что пользователь является участником диалога
-        if user_id not in dialog.participants:
-            return jsonify({"error": "You are not a participant in this dialog"}), 403
-
-        dialog.notifications = not dialog.notifications
-        db.session.commit()
-        return jsonify({"message": "Dialog notifications flag updated successfully", "notifications": dialog.notifications}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
