@@ -3,6 +3,7 @@ from flask_jwt_extended import jwt_required, get_jwt_identity, decode_token
 from flask_socketio import emit, join_room, leave_room, disconnect
 from models import (db, Message, Dialog, User, Group, GroupMessage, GroupMember, increment_message_count,
                     decrement_message_count)
+from uploads import delete_file_from_disk
 from app import socketio, logger
 from jwt.exceptions import ExpiredSignatureError
 
@@ -276,15 +277,31 @@ def edit_message(message_id):
             return jsonify({'message': 'You can only edit your own messages'}), 403
 
         data = request.get_json()
-        if 'text' in data:
+        if 'text' in data and message.text != data['text']:
             message.text = data['text']
             message.is_edited = True
-        if 'images' in data:
+
+        if 'images' in data and message.images != data['images']:
+            # Удаляем старые изображения
+            if message.images:
+                for image in message.images:
+                    delete_file_from_disk('photos', image)
             message.images = data['images']
-        if 'voice' in data:
-            message.voice = data['voice']
-        if 'file' in data:
+            message.is_edited = True
+
+        elif 'file' in data and message.file != data['file']:
+            # Удаляем старый файл
+            if message.file:
+                delete_file_from_disk('files', message.file)
             message.file = data['file']
+            message.is_edited = True
+        
+        elif 'voice' in data and message.voice != data['voice']:
+            # Удаляем старый голосовой файл
+            if message.voice:
+                delete_file_from_disk('audio', message.voice)
+            message.voice = data['voice']
+            message.is_edited = True
 
         db.session.commit()
 
@@ -306,7 +323,23 @@ def edit_message(message_id):
 
         return jsonify({'message': 'Message updated successfully'}), 200
     except Exception as e:
+        db.session.rollback() # Откат транзакции в случае ошибки
         return jsonify({'error': str(e)}), 500
+
+
+def delete_files_for_message(message):
+    # Удаление изображений, если они есть
+    if message.images:
+        for image in message.images:
+            delete_file_from_disk('photos', image)
+
+    # Удаление обычного файла, если он есть
+    elif message.file:
+        delete_file_from_disk('files', message.file)
+
+    # Удаление голосового файла, если он есть
+    elif message.voice:
+        delete_file_from_disk('audio', message.voice)
 
 
 @messages_bp.route('/messages', methods=['DELETE'])
@@ -331,6 +364,7 @@ def delete_messages():
                 return jsonify({"error": "You are not a participant in the dialog of one of the messages"}), 403
 
         for message in messages:
+            delete_files_for_message(message)
             db.session.delete(message)
 
         decrement_message_count(dialog_id=messages[0].id_dialog, count=len(messages))
@@ -361,6 +395,12 @@ def delete_dialog(dialog_id):
         if dialog.id_user1 != user_id and dialog.id_user2 != user_id:
             return jsonify({"error": "You are not a participant in this dialog"}), 403
 
+        messages = Message.query.filter_by(id_dialog=dialog_id).all()
+        # Удаляем файлы, прикрепленные к сообщениям
+        for message in messages:
+            delete_files_for_message(message)
+
+        Message.query.filter_by(id_dialog=dialog_id).delete()
         db.session.delete(dialog)
         db.session.commit()
 
@@ -371,6 +411,7 @@ def delete_dialog(dialog_id):
 
         return jsonify({"message": "Dialog deleted successfully"}), 200
     except Exception as e:
+        db.session.rollback()  # Откат транзакции в случае ошибки
         return jsonify({"error": str(e)}), 500
 
 
@@ -601,6 +642,11 @@ def delete_dialog_messages(dialog_id):
         if dialog.id_user1 != user_id and dialog.id_user2 != user_id:
             return jsonify({"error": "You are not a participant in this dialog"}), 403
 
+        messages = Message.query.filter_by(id_dialog=dialog_id).all()
+        # Удаление файлов для каждого сообщения
+        for message in messages:
+            delete_files_for_message(message)
+
         Message.query.filter_by(id_dialog=dialog_id).delete()
         db.session.commit()
 
@@ -611,6 +657,7 @@ def delete_dialog_messages(dialog_id):
 
         return jsonify({"message": "All messages in the dialog deleted successfully"}), 200
     except Exception as e:
+        db.session.rollback()  # Откат транзакции в случае ошибки
         return jsonify({"error": str(e)}), 500
 
 

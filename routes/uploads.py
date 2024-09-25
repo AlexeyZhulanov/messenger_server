@@ -81,20 +81,29 @@ def get_file(folder, filename):
 @uploads_bp.route('/files/<folder>/<filename>', methods=['DELETE'])
 @jwt_required()
 def delete_file(folder, filename):
+    result, msg = delete_file_from_disk(folder, filename)
+    if result:
+        return jsonify({'message': 'File deleted successfully'}), 200
+    else:
+        return jsonify({'error': msg}), 400
+
+
+def delete_file_from_disk(folder, filename):
     folder_mapping = {
         'photos': current_app.config['UPLOAD_FOLDER_PHOTOS'],
         'audio': current_app.config['UPLOAD_FOLDER_AUDIO'],
         'files': current_app.config['UPLOAD_FOLDER_FILES']
     }
+    
     if folder not in folder_mapping:
-        return jsonify({'error': 'Invalid folder'}), 400
+        return False, 'Invalid folder'
 
     file_path = os.path.join(folder_mapping[folder], filename)
     if not os.path.exists(file_path):
-        return jsonify({'error': 'File not found'}), 404
+        return False, 'File not found'
 
     try:
         os.remove(file_path)
-        return jsonify({'message': 'File deleted successfully'}), 200
+        return True, 'File deleted successfully'
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return False, str(e)
