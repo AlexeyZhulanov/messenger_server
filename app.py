@@ -3,6 +3,8 @@ from flask_jwt_extended import JWTManager
 from config import Config
 from models import db
 from flask_socketio import SocketIO
+import dramatiq
+from dramatiq.brokers.redis import RedisBroker
 import os
 import logging
 
@@ -10,6 +12,8 @@ app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 socketio = SocketIO(app, cors_allowed_origins="*")  # Поддержка CORS для клиента
+redis_broker = RedisBroker(host="localhost", port=6379)
+dramatiq.set_broker(redis_broker)
 
 
 def create_app():

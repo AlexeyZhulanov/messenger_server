@@ -4,7 +4,7 @@ from flask_socketio import emit, join_room, leave_room, disconnect
 from models import (db, Message, Dialog, User, Group, GroupMessage, GroupMember, increment_message_count,
                     decrement_message_count)
 from .uploads import delete_file_from_disk
-from app import socketio, logger
+from app import socketio, logger, dramatiq
 from jwt.exceptions import ExpiredSignatureError
 
 
@@ -434,6 +434,24 @@ def get_users():
         return jsonify({'error': str(e)}), 500
 
 
+@dramatiq.actor
+def delete_messages_task(message_ids, dialog_id):
+    try:
+        # Удаление сообщений
+        Message.query.filter(Message.id.in_(message_ids)).delete(synchronize_session=False)
+        db.session.commit()
+
+        # Уведомление через WebSocket
+        socketio.emit('messages_deleted', {
+            'dialog_id': dialog_id,
+            'deleted_message_ids': message_ids
+        }, room=f'dialog_{dialog_id}')
+
+    except Exception as e:
+        db.session.rollback()
+        print(f"Error deleting messages: {str(e)}")
+
+
 @messages_bp.route('/messages/read', methods=['PUT'])
 @jwt_required()
 def mark_messages_as_read():
@@ -463,6 +481,23 @@ def mark_messages_as_read():
             message.is_read = True
 
         db.session.commit()
+
+        # Если в диалоге установлен интервал автоудаления сообщений
+        if dialog.auto_delete_interval > 0:
+            # Определяем время автоудаления в секундах (если требуется учитывать секунды)
+            delete_interval_seconds = dialog.auto_delete_interval
+
+            # Убедимся, что автоудаление происходит корректно
+            if delete_interval_seconds >= 60:
+                logger.info(f"Удаление сообщений будет запланировано через {delete_interval_seconds // 60} минут.")
+            else:
+                logger.info(f"Удаление сообщений будет запланировано через {delete_interval_seconds} секунд.")
+
+            # Запуск задачи для удаления сообщений через указанный интервал времени
+            delete_messages_task.send_with_options(
+            args=[message_ids, dialog.id],
+            delay=delete_interval_seconds * 1000
+            )
 
         # Уведомление участников через WebSocket
         socketio.emit('messages_read', {

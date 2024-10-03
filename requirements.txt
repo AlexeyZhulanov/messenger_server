@@ -7,3 +7,6 @@ werkzeug
 sqlalchemy
 gunicorn
 eventlet
+dramatiq
+dramatiq[redis]
+redis
