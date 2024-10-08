@@ -1,11 +1,12 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity, decode_token
 from flask_socketio import emit, join_room, leave_room, disconnect
-from models import (db, Message, Dialog, User, Group, GroupMessage, GroupMember, increment_message_count,
-                    decrement_message_count)
+from models import (db, Dialog, User, Group, GroupMessage, GroupMember, increment_message_count,
+                    decrement_message_count, create_message_table)
 from .uploads import delete_file_from_disk
-from app import socketio, logger, dramatiq
+from app import socketio, logger, dramatiq, app
 from jwt.exceptions import ExpiredSignatureError
+from sqlalchemy import text
 
 
 messages_bp = Blueprint('messages', __name__)
@@ -14,55 +15,55 @@ messages_bp = Blueprint('messages', __name__)
 @messages_bp.route('/dialogs', methods=['POST'])
 @jwt_required()
 def create_dialog():
-    user_id = get_jwt_identity()
-    data = request.get_json()
-    other_user = User.query.filter_by(name=data['name']).first()
-
-    if not other_user:
-        return jsonify({'message': 'User not found'}), 404
-
-    # Проверка на существование диалога
-    existing_dialog = Dialog.query.filter(
-        ((Dialog.id_user1 == user_id) & (Dialog.id_user2 == other_user.id)) |
-        ((Dialog.id_user1 == other_user.id) & (Dialog.id_user2 == user_id))
-    ).first()
-
-    if existing_dialog:
-        return jsonify({'message': 'Dialog already exists'}), 409
-
-    # Создание нового диалога
-    new_dialog = Dialog(id_user1=user_id, id_user2=other_user.id)
-    db.session.add(new_dialog)
-    db.session.commit()
-
-    # Отправка сообщения о создании диалога
-    user = User.query.get(user_id)
-    creation_message = Message(
-        id_dialog=new_dialog.id,
-        id_sender=user_id,
-        text=f"{user.username} has created a dialog"
-    )
-    db.session.add(creation_message)
-    db.session.commit()
-    increment_message_count(dialog_id=new_dialog.id)
-
-    # Уведомление участников через WebSocket
-    socketio.emit('dialog_created', {
-        'dialog_id': new_dialog.id,
-        'message': f"Dialog created between {user.username} and {other_user.username}"
-    }, room=f'dialog_{new_dialog.id}')
-
-    return jsonify({'message': 'Dialog created successfully'}), 201
-
-
-@messages_bp.route('/messages', methods=['POST'])
-@jwt_required()
-def send_message():
     try:
-        id_dialog = request.args.get('id_dialog')
+        user_id = get_jwt_identity()
+        data = request.get_json()
+        other_user = User.query.filter_by(name=data['name']).first()
+
+        if not other_user:
+            return jsonify({'message': 'User not found'}), 404
+
+        # Проверка на существование диалога
+        existing_dialog = Dialog.query.filter(
+            ((Dialog.id_user1 == user_id) & (Dialog.id_user2 == other_user.id)) |
+            ((Dialog.id_user1 == other_user.id) & (Dialog.id_user2 == user_id))
+        ).first()
+
+        if existing_dialog:
+            return jsonify({'message': 'Dialog already exists'}), 409
+
+        # Создание нового диалога
+        new_dialog = Dialog(id_user1=user_id, id_user2=other_user.id)
+        db.session.add(new_dialog)
+        db.session.commit()
+
+        create_message_table(new_dialog.id)
+
+        # Отправка сообщения о создании диалога
+        user = User.query.get(user_id)
+        insert_message_query = f'INSERT INTO messages_dialog_{new_dialog.id} (id_sender, text) VALUES (:id_sender, :text)'
+        db.session.execute(text(insert_message_query), {'id_sender': user_id, 'text': f'{user.username} has created a dialog'})
+        db.session.commit()
+        increment_message_count(dialog_id=new_dialog.id)
+
+        # Уведомление участников через WebSocket
+        socketio.emit('dialog_created', {
+            'dialog_id': new_dialog.id,
+            'message': f"Dialog created between {user.username} and {other_user.username}"
+        }, room=f'dialog_{new_dialog.id}')
+
+        return jsonify({'message': 'Dialog created successfully'}), 201
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@messages_bp.route('/messages/<int:id_dialog>', methods=['POST'])
+@jwt_required()
+def send_message(id_dialog):
+    try:
         data = request.get_json()
         id_sender = get_jwt_identity()
-        text = data.get('text')
+        text_content = data.get('text')
         images = data.get('images')
         voice = data.get('voice')
         file = data.get('file')
@@ -79,50 +80,60 @@ def send_message():
         if dialog.id_user1 != id_sender and dialog.id_user2 != id_sender:
             return jsonify({"error": "You are not a participant in this dialog"}), 403
 
-        # Создание и сохранение нового сообщения
-        message = Message(
-            id_dialog=id_dialog,
-            id_sender=id_sender,
-            text=text,
-            images=images,
-            voice=voice,
-            file=file,
-            is_edited=False,
-            is_forwarded=is_forwarded,
-            username_author_original=username_author_original,
-            reference_to_message_id=reference_to_message_id
-        )
-        db.session.add(message)
+        # Создание таблицы сообщений для диалога, если она не существует
+        # create_message_table(id_dialog)
+
+        # Вставка сообщения в партицированную таблицу
+        table_name = f'messages_dialog_{id_dialog}'
+        insert_message_query = text(f'''INSERT INTO {table_name} 
+        (id_sender, text, images, voice, file, is_edited, is_forwarded, reference_to_message_id, username_author_original, is_read)
+        VALUES (:id_sender, :text, :images, :voice, :file, :is_edited, :is_forwarded, :reference_to_message_id, :username_author_original, :is_read)
+        RETURNING id, timestamp;''')
+
+        result = db.session.execute(insert_message_query, {
+            'id_sender': id_sender,
+            'text': text_content,
+            'images': images,
+            'voice': voice,
+            'file': file,
+            'is_edited': False,
+            'is_forwarded': is_forwarded,
+            'is_read': False,
+            'reference_to_message_id': reference_to_message_id,
+            'username_author_original': username_author_original
+        })
         db.session.commit()
 
         increment_message_count(dialog_id=id_dialog)
 
-        # Уведомление участников через WebSocket
+        message_id, timestamp = result.fetchone()
+
+        # Отправляем уведомление через WebSocket
         socketio.emit('new_message', {
-            'id': message.id,
-            'id_dialog': message.id_dialog,
-            'id_sender': message.id_sender,
-            'text': message.text,
-            'images': message.images,
-            'voice': message.voice,
-            'file': message.file,
-            'is_edited': message.is_edited,
-            'is_forwarded': message.is_forwarded,
-            'username_author_original': message.username_author_original,
-            'reference_to_message_id': message.reference_to_message_id,
-            'timestamp': int(message.timestamp.timestamp() * 1000 + 10800000)
-        }, room=f'dialog_{message.id_dialog}')
+            'id': message_id,
+            'id_sender': id_sender,
+            'text': text_content,
+            'images': images,
+            'voice': voice,
+            'file': file,
+            'is_edited': False,
+            'is_read': False,
+            'is_forwarded': is_forwarded,
+            'username_author_original': username_author_original,
+            'reference_to_message_id': reference_to_message_id,
+            'timestamp': int(timestamp.timestamp() * 1000)
+        }, room=f'dialog_{id_dialog}')
 
         return jsonify({"message": "Message sent successfully"}), 201
     except Exception as e:
+        db.session.rollback()
         return jsonify({'error': str(e)}), 500
 
 
-@messages_bp.route('/messages', methods=['GET'])
+@messages_bp.route('/messages/<int:id_dialog>', methods=['GET'])
 @jwt_required()
-def get_messages():
+def get_messages(id_dialog):
     try:
-        id_dialog = request.args.get('id_dialog')
         user_id = get_jwt_identity()
 
         # Проверка на участие пользователя в диалоге
@@ -137,29 +148,35 @@ def get_messages():
         size = request.args.get('size', type=int)
 
         if page is None or size is None:
-            return jsonify({'error': 'id_dialog, page, and size parameters are required'}), 400
+            return jsonify({'error': 'id_dialog, Page, and size parameters are required'}), 400
 
-        query = Message.query.filter_by(id_dialog=id_dialog).order_by(Message.timestamp.asc())
-        total_count = query.count()
-        end = min(total_count, total_count - page * size)
-        start = max(0, total_count - (page + 1) * size)
-        messages = query.slice(start, end).all()
+        # Вычисляем границы выборки
+        offset = page * size
+
+        # Имя таблицы сообщений для диалога
+        table_name = f'messages_dialog_{id_dialog}'
+
+        # Получение сообщений с пагинацией
+        get_messages_query = text(f'SELECT * FROM {table_name} ORDER BY timestamp ASC LIMIT :limit OFFSET :offset;')
+        messages = db.session.execute(get_messages_query, {'limit': size, 'offset': offset}).mappings().all()
+
+        if not messages:
+            return jsonify([]), 200
 
         messages_data = [
             {
-                "id": msg.id,
-                "id_sender": msg.id_sender,
-                "id_dialog": msg.id_dialog,
-                "text": msg.text,
-                "images": msg.images,
-                "voice": msg.voice,
-                "file": msg.file,
-                "is_read": msg.is_read,
-                "is_edited": msg.is_edited,
-                "timestamp": msg.timestamp,
-                "reference_to_message_id": msg.reference_to_message_id,
-                "is_forwarded": msg.is_forwarded,
-                "username_author_original": msg.username_author_original
+                "id": msg['id'],
+                "id_sender": msg['id_sender'],
+                "text": msg['text'],
+                "images": msg['images'],
+                "voice": msg['voice'],
+                "file": msg['file'],
+                "is_edited": msg['is_edited'],
+                "is_read": msg['is_read'],
+                "is_forwarded": msg['is_forwarded'],
+                "reference_to_message_id": msg['reference_to_message_id'],
+                "username_author_original": msg['username_author_original'],
+                "timestamp": msg['timestamp']
             }
             for msg in messages
         ]
@@ -175,44 +192,44 @@ def get_messages():
 def get_message_by_id(message_id):
     try:
         user_id = get_jwt_identity()
+        id_dialog = request.args.get('id_dialog')
+        dialog = Dialog.query.get(id_dialog)
+        if not dialog:
+            return jsonify({"error": "Dialog not found"}), 404
 
-        message = Message.query.get(message_id)
+        if dialog.id_user1 != user_id and dialog.id_user2 != user_id:
+            return jsonify({"error": "You are not a participant in this dialog"}), 403
+        
+        # Имя таблицы сообщений для данного диалога
+        table_name = f'messages_dialog_{id_dialog}'
+
+        # Получение сообщения по ID
+        get_message_query = text(f'SELECT * FROM {table_name} WHERE id = :message_id')
+        message = db.session.execute(get_message_query, {'message_id': message_id}).mappings().first()
+
         if not message:
             return jsonify({"error": "Message not found"}), 404
 
-        dialog = Dialog.query.get(message.id_dialog)
-        if not dialog:
-            return jsonify({"error": "Dialog not found"}), 404
-        if dialog.id_user1 != user_id and dialog.id_user2 != user_id:
-            return jsonify({"error": "You are not a participant in this dialog"}), 403
+        get_position_query = text(f'''
+        SELECT row_number FROM (
+        SELECT id, ROW_NUMBER() OVER (ORDER BY timestamp ASC) AS row_number
+        FROM {table_name}) AS numbered_messages WHERE id = :message_id;''')
 
-        all_messages = Message.query.filter_by(id_dialog=message.id_dialog).order_by(Message.timestamp.asc()).all()
-
-        # Определяем порядковый номер сообщения, отсчитывая с конца списка
-        message_position = None
-        total_messages = len(all_messages)
-        for index, msg in enumerate(all_messages):
-            if msg.id == message.id:
-                message_position = total_messages - index - 1  # Индексация с конца, начиная с нуля
-                break
-
-        if message_position is None:
-            return jsonify({"error": "Message not found in the dialog"}), 404
+        message_position = db.session.execute(get_position_query, {'message_id': message['id']}).scalar()
 
         message_data = {
-            "id": message.id,
-            "id_sender": message.id_sender,
-            "id_dialog": message.id_dialog,
-            "text": message.text,
-            "images": message.images,
-            "voice": message.voice,
-            "file": message.file,
-            "is_read": message.is_read,
-            "is_edited": message.is_edited,
-            "timestamp": message.timestamp,
-            "reference_to_message_id": message.reference_to_message_id,
-            "is_forwarded": message.is_forwarded,
-            "username_author_original": message.username_author_original,
+            "id": message['id'],
+            "id_sender": message['id_sender'],
+            "text": message['text'],
+            "images": message['images'],
+            "voice": message['voice'],
+            "file": message['file'],
+            "is_edited": message['is_edited'],
+            "is_read": message['is_read'],
+            "is_forwarded": message['is_forwarded'],
+            "reference_to_message_id": message['reference_to_message_id'],
+            "username_author_original": message['username_author_original'],
+            "timestamp": message['timestamp'],
             "position": message_position
         }
 
@@ -269,118 +286,130 @@ def remove_key_from_dialog(dialog_id):
 @jwt_required()
 def edit_message(message_id):
     try:
-        user_id = get_jwt_identity()
-        message = Message.query.get(message_id)
+        id_user = get_jwt_identity()
+        id_dialog = request.args.get('id_dialog')
+        data = request.get_json()
+
+        table_name = f'messages_dialog_{id_dialog}'
+        # Проверка существования сообщения
+        select_message_query = text(f'SELECT * FROM {table_name} WHERE id = :message_id')
+        message = db.session.execute(select_message_query, {'message_id': message_id}).mappings().first()
+
         if not message:
             return jsonify({'message': 'Message not found'}), 404
-        if message.id_sender != user_id:
+        if message['id_sender'] != id_user:
             return jsonify({'message': 'You can only edit your own messages'}), 403
 
-        data = request.get_json()
-        if 'text' in data and message.text != data['text']:
-            message.text = data['text']
-            message.is_edited = True
+        # Обновляем поля
+        updated = False
 
-        if 'images' in data and message.images != data['images']:
-            # Удаляем старые изображения
-            if message.images:
-                for image in message.images:
-                    delete_file_from_disk('photos', image)
-            message.images = data['images']
-            message.is_edited = True
+        if 'text' in data and message['text'] != data['text']:
+            sql_update = text(f"UPDATE {table_name} SET text = :text, is_edited = TRUE WHERE id = :message_id")
+            db.session.execute(sql_update, {'text': data['text'], 'message_id': message_id})
+            updated = True
 
-        elif 'file' in data and message.file != data['file']:
-            # Удаляем старый файл
-            if message.file:
-                delete_file_from_disk('files', message.file)
-            message.file = data['file']
-            message.is_edited = True
-        
-        elif 'voice' in data and message.voice != data['voice']:
-            # Удаляем старый голосовой файл
-            if message.voice:
-                delete_file_from_disk('audio', message.voice)
-            message.voice = data['voice']
-            message.is_edited = True
+        if 'images' in data and message['images'] != data['images']:
+            delete_files_for_message(id_dialog, message['images'], 'photos')  # Удаляем старые изображения
+            sql_update = text(f"UPDATE {table_name} SET images = :images, is_edited = TRUE WHERE id = :message_id")
+            db.session.execute(sql_update, {'images': data['images'], 'message_id': message_id})
+            updated = True
 
-        db.session.commit()
+        if 'file' in data and message['file'] != data['file']:
+            delete_files_for_message(id_dialog, message['file'], 'files')  # Удаляем старый файл
+            sql_update = text(f"UPDATE {table_name} SET file = :file, is_edited = TRUE WHERE id = :message_id")
+            db.session.execute(sql_update, {'file': data['file'], 'message_id': message_id})
+            updated = True
 
-        # Уведомление участников через WebSocket
-        socketio.emit('message_edited', {
-            'id': message.id,
-            'id_dialog': message.id_dialog,
-            'id_sender': message.id_sender,
-            'text': message.text,
-            'images': message.images,
-            'voice': message.voice,
-            'file': message.file,
-            'is_edited': message.is_edited,
-            'is_forwarded': message.is_forwarded,
-            'username_author_original': message.username_author_original,
-            'reference_to_message_id': message.reference_to_message_id,
-            'timestamp': int(message.timestamp.timestamp() * 1000 + 10800000)
-        }, room=f'dialog_{message.id_dialog}')
+        if 'voice' in data and message['voice'] != data['voice']:
+            delete_files_for_message(id_dialog, message['voice'], 'audio')  # Удаляем старый голосовой файл
+            sql_update = text(f"UPDATE {table_name} SET voice = :voice, is_edited = TRUE WHERE id = :message_id")
+            db.session.execute(sql_update, {'voice': data['voice'], 'message_id': message_id})
+            updated = True
 
-        return jsonify({'message': 'Message updated successfully'}), 200
+        if updated:
+            db.session.commit()
+
+            # Уведомляем через WebSocket
+            socketio.emit('message_edited', {
+                'id': message_id,
+                'id_sender': id_user,
+                'text': data.get('text', message['text']),
+                'images': data.get('images', message['images']),
+                'voice': data.get('voice', message['voice']),
+                'file': data.get('file', message['file']),
+                'is_edited': True,
+                'is_forwarded': data.get('is_forwarded', message['is_forwarded']),
+                'username_author_original': data.get('username_author_original', message['username_author_original']),
+                'reference_to_message_id': data.get('reference_to_message_id', message['reference_to_message_id']),
+                'timestamp': int(message['timestamp'].timestamp() * 1000)
+            }, room=f'dialog_{id_dialog}')
+
+            return jsonify({'message': 'Message updated successfully'}), 200
+        else:
+            return jsonify({'error': 'No changes made'}), 400
+
     except Exception as e:
-        db.session.rollback() # Откат транзакции в случае ошибки
+        db.session.rollback()
         return jsonify({'error': str(e)}), 500
 
 
-def delete_files_for_message(message):
-    # Удаление изображений, если они есть
-    if message.images:
-        for image in message.images:
-            delete_file_from_disk('photos', image)
+def delete_files_for_message(id_dialog, file_names, folder):
+    if not file_names:
+        return
 
-    # Удаление обычного файла, если он есть
-    elif message.file:
-        delete_file_from_disk('files', message.file)
+    if isinstance(file_names, list):  # Для изображений (могут быть списком)
+        for file_name in file_names:
+            delete_file_from_disk(folder, str(id_dialog), file_name)
+    else:  # Для одиночных файлов (например, file, voice)
+        delete_file_from_disk(folder, str(id_dialog), file_names)
+        
 
-    # Удаление голосового файла, если он есть
-    elif message.voice:
-        delete_file_from_disk('audio', message.voice)
-
-
-@messages_bp.route('/messages', methods=['DELETE'])
+@messages_bp.route('/messages/<int:id_dialog>', methods=['DELETE'])
 @jwt_required()
-def delete_messages():
+def delete_messages(id_dialog):
     try:
-        user_id = get_jwt_identity()
         data = request.get_json()
         message_ids = data.get('message_ids', [])
 
         if not message_ids:
             return jsonify({"error": "No message IDs provided"}), 400
 
-        messages = Message.query.filter(Message.id.in_(message_ids)).all()
+        table_name = f'messages_dialog_{id_dialog}'
+        
+        # Запрос на получение сообщений для удаления
+        select_messages_query = text(f'SELECT id, images, file, voice FROM {table_name} WHERE id IN :message_ids')
+        messages = db.session.execute(select_messages_query, {'message_ids': tuple(message_ids)}).mappings().all()
+
         if not messages:
             return jsonify({"error": "Some messages not found"}), 404
 
-        # Проверка на участие пользователя в диалоге
+        # Удаление файлов и сообщений
         for message in messages:
-            dialog = Dialog.query.get(message.id_dialog)
-            if dialog.id_user1 != user_id and dialog.id_user2 != user_id:
-                return jsonify({"error": "You are not a participant in the dialog of one of the messages"}), 403
+            if message['images']:
+                delete_files_for_message(id_dialog, message['images'], 'photos')  # Удаляем изображения
+            elif message['file']:
+                delete_files_for_message(id_dialog, message['file'], 'files')   # Удаляем файлы
+            elif message['voice']:
+                delete_files_for_message(id_dialog, message['voice'], 'audio')  # Удаляем голосовые сообщения
 
-        for message in messages:
-            delete_files_for_message(message)
-            db.session.delete(message)
+            sql_delete = text(f"DELETE FROM {table_name} WHERE id = :message_id")
+            db.session.execute(sql_delete, {'message_id': message['id']})
 
-        decrement_message_count(dialog_id=messages[0].id_dialog, count=len(messages))
+        decrement_message_count(dialog_id=id_dialog, count=len(messages))
 
         db.session.commit()
 
-        # Уведомление участников через WebSocket
+        # Уведомляем участников через WebSocket
         socketio.emit('messages_deleted', {
-            'dialog_id': messages[0].id_dialog,
+            'dialog_id': id_dialog,
             'deleted_message_ids': message_ids
-        }, room=f'dialog_{messages[0].id_dialog}')
+        }, room=f'dialog_{id_dialog}')
 
         return jsonify({"message": "Messages deleted successfully"}), 200
     except Exception as e:
-        db.session.rollback()  # Откат транзакции в случае ошибки
+        db.session.rollback()
         return jsonify({"error": str(e)}), 500
+
 
 
 @messages_bp.route('/dialogs/<int:dialog_id>', methods=['DELETE'])
@@ -395,23 +424,38 @@ def delete_dialog(dialog_id):
         if dialog.id_user1 != user_id and dialog.id_user2 != user_id:
             return jsonify({"error": "You are not a participant in this dialog"}), 403
 
-        messages = Message.query.filter_by(id_dialog=dialog_id).all()
+        # Определяем имя таблицы с сообщениями для данного диалога
+        table_name = f'messages_dialog_{dialog_id}'
+        
+        # Получаем все сообщения для удаления
+        select_messages_query = text(f'SELECT * FROM {table_name}')
+        messages = db.session.execute(select_messages_query).mappings().all()
+
         # Удаляем файлы, прикрепленные к сообщениям
         for message in messages:
-            delete_files_for_message(message)
+            if message['images']:
+                delete_files_for_message(dialog_id, message['images'], 'photos')
+            elif message['file']:
+                delete_files_for_message(dialog_id, message['file'], 'audio')
+            elif message['voice']:
+                delete_files_for_message(dialog_id, message['voice'], 'files')
 
-        Message.query.filter_by(id_dialog=dialog_id).delete()
+        # Удаляем сообщения из партицированной таблицы
+        delete_messages_query = text(f'DELETE FROM {table_name}')
+        db.session.execute(delete_messages_query)
+
+        # Удаляем диалог
         db.session.delete(dialog)
         db.session.commit()
 
-        # Уведомление участников через WebSocket
+        # Уведомляем участников через WebSocket
         socketio.emit('dialog_deleted', {
             'dialog_id': dialog_id
         }, room=f'dialog_{dialog_id}')
 
         return jsonify({"message": "Dialog deleted successfully"}), 200
     except Exception as e:
-        db.session.rollback()  # Откат транзакции в случае ошибки
+        db.session.rollback()
         return jsonify({"error": str(e)}), 500
 
 
@@ -436,25 +480,39 @@ def get_users():
 
 @dramatiq.actor
 def delete_messages_task(message_ids, dialog_id):
-    try:
-        # Удаление сообщений
-        Message.query.filter(Message.id.in_(message_ids)).delete(synchronize_session=False)
-        db.session.commit()
+    with app.app_context():
+        try:
+            table_name = f'messages_dialog_{dialog_id}'
+            for message_id in message_ids:
+                get_files_query = text(f'''SELECT images, voice, file FROM {table_name} WHERE id = :message_id''')
+                message = db.session.execute(get_files_query, {'message_id': message_id}).mappings().first()
+                if message['images']:
+                    delete_files_for_message(dialog_id, message['images'], 'photos')
+                elif message['file']:
+                    delete_files_for_message(dialog_id, message['file'], 'files')
+                elif message['voice']:
+                    delete_files_for_message(dialog_id, message['voice'], 'audio')
 
-        # Уведомление через WebSocket
-        socketio.emit('messages_deleted', {
-            'dialog_id': dialog_id,
-            'deleted_message_ids': message_ids
-        }, room=f'dialog_{dialog_id}')
+            # Удаление сообщений
+            delete_messages_query = text(f'''DELETE FROM messages_dialog_{dialog_id} WHERE id IN :message_ids''')
+            db.session.execute(delete_messages_query, {'message_ids': tuple(message_ids)})
+            db.session.commit()
 
-    except Exception as e:
-        db.session.rollback()
-        print(f"Error deleting messages: {str(e)}")
+            logger.info(f"Sending WebSocket message to room dialog_{dialog_id} with deleted message ids: {message_ids}")
+            # Уведомление через WebSocket
+            socketio.emit('messages_deleted', {
+                'dialog_id': dialog_id,
+                'deleted_message_ids': message_ids
+            }, room=f'dialog_{dialog_id}')
+
+        except Exception as e:
+            db.session.rollback()
+            print(f"Error deleting messages: {str(e)}")
 
 
-@messages_bp.route('/messages/read', methods=['PUT'])
+@messages_bp.route('/messages/<int:id_dialog>/read', methods=['PUT'])
 @jwt_required()
-def mark_messages_as_read():
+def mark_messages_as_read(id_dialog):
     try:
         user_id = get_jwt_identity()
         data = request.get_json()
@@ -463,50 +521,55 @@ def mark_messages_as_read():
         if not message_ids:
             return jsonify({"error": "No message IDs provided"}), 400
 
-        messages = Message.query.filter(Message.id.in_(message_ids)).all()
+        dialog = Dialog.query.get(id_dialog)
+        if not dialog or (dialog.id_user1 != user_id and dialog.id_user2 != user_id):
+            return jsonify({"error": "Unauthorized to mark these messages as read"}), 403
 
-        if not messages:
+        ids_final = []
+        table_name = f'messages_dialog_{id_dialog}'
+        for message_id in message_ids:
+            # Получаем сообщение из партицированной таблицы
+            select_message_query = text(f'SELECT id, id_sender FROM {table_name} WHERE id = :message_id')
+            message = db.session.execute(select_message_query, {'message_id': message_id}).mappings().first()
+            if message and message['id_sender'] != user_id:
+                ids_final.append(message_id)
+
+        if not ids_final:
             return jsonify({"error": "Messages not found"}), 404
 
-        for message in messages:
-            # Проверяем, что текущий пользователь не является отправителем сообщения
-            if message.id_sender == user_id:
-                return jsonify({"error": "Sender cannot mark their own message as read"}), 400
-
-            # Проверяем, что сообщение относится к диалогу, в котором участвует текущий пользователь
-            dialog = Dialog.query.get(message.id_dialog)
-            if not dialog or (dialog.id_user1 != user_id and dialog.id_user2 != user_id):
-                return jsonify({"error": "Unauthorized to mark this message as read"}), 403
-
-            message.is_read = True
+        # Обновляем статус "прочитано" для каждого сообщения
+        for message_id in ids_final:
+            update_read_status_query = text(f'UPDATE {table_name} SET is_read = True WHERE id = :message_id')
+            db.session.execute(update_read_status_query, {'message_id': message_id})
 
         db.session.commit()
 
-        # Если в диалоге установлен интервал автоудаления сообщений
+        # Проверяем, установлен ли интервал автоудаления сообщений
         if dialog.auto_delete_interval > 0:
-            # Определяем время автоудаления в секундах (если требуется учитывать секунды)
+            # Конвертируем интервал автоудаления в секунды
             delete_interval_seconds = dialog.auto_delete_interval
 
-            # Убедимся, что автоудаление происходит корректно
+            # Логируем время, через которое будет выполнено удаление
             if delete_interval_seconds >= 60:
                 logger.info(f"Удаление сообщений будет запланировано через {delete_interval_seconds // 60} минут.")
             else:
                 logger.info(f"Удаление сообщений будет запланировано через {delete_interval_seconds} секунд.")
 
-            # Запуск задачи для удаления сообщений через указанный интервал времени
+            # Запускаем задачу для автоудаления сообщений
             delete_messages_task.send_with_options(
-            args=[message_ids, dialog.id],
-            delay=delete_interval_seconds * 1000
+                args=[ids_final, dialog.id],
+                delay=delete_interval_seconds * 1000  # Интервал в миллисекундах
             )
 
-        # Уведомление участников через WebSocket
+        # Уведомляем участников через WebSocket
         socketio.emit('messages_read', {
-            'dialog_id': messages[0].id_dialog,
-            'messages_read_ids': message_ids
-        }, room=f'dialog_{messages[0].id_dialog}')
+            'dialog_id': id_dialog,
+            'messages_read_ids': ids_final
+        }, room=f'dialog_{id_dialog}')
 
         return jsonify({"message": "Messages marked as read successfully"}), 200
     except Exception as e:
+        db.session.rollback()
         return jsonify({"error": str(e)}), 500
 
 
@@ -526,24 +589,29 @@ def search_messages_in_dialog(dialog_id):
     if dialog.id_user1 != user_id and dialog.id_user2 != user_id:
         return jsonify({"error": "You are not a participant of this dialog"}), 403
 
-    messages = Message.query.filter(Message.id_dialog == dialog_id, Message.text.ilike(f'%{search_text}%')).all()
+    # Определяем имя таблицы с сообщениями для данного диалога
+    table_name = f'messages_dialog_{dialog_id}'
+
+    # Полнотекстовый поиск по партицированной таблице сообщений
+    search_query = text(f"SELECT * FROM {table_name} WHERE to_tsvector('simple', text) @@ to_tsquery('simple', :search_text)")
+    messages = db.session.execute(search_query, {'search_text': search_text}).mappings().all()
 
     message_list = [
-    {
-        "id": message.id,
-        "id_sender": message.id_sender,
-        "id_dialog": message.id_dialog,
-        "text": message.text,
-        "images": message.images,
-        "voice": message.voice,
-        "file": message.file,
-        "is_read": message.is_read,
-        "is_edited": message.is_edited,
-        "timestamp": message.timestamp,
-        "reference_to_message_id": message.reference_to_message_id,
-        "is_forwarded": message.is_forwarded,
-        "username_author_original": message.username_author_original
-    } for message in messages]
+        {
+            "id": message['id'],
+            "id_sender": message['id_sender'],
+            "text": message['text'],
+            "images": message['images'],
+            "voice": message['voice'],
+            "file": message['file'],
+            "is_read": message['is_read'],
+            "is_edited": message['is_edited'],
+            "timestamp": message['timestamp'],
+            "reference_to_message_id": message['reference_to_message_id'],
+            "is_forwarded": message['is_forwarded'],
+            "username_author_original": message['username_author_original']
+        } for message in messages
+    ]
 
     return jsonify(message_list), 200
 
@@ -560,7 +628,8 @@ def get_conversations():
         for dialog in dialogs:
             other_user_id = dialog.id_user1 if dialog.id_user1 != user_id else dialog.id_user2
             other_user = User.query.get(other_user_id)
-            last_message = Message.query.filter_by(id_dialog=dialog.id).order_by(Message.timestamp.desc()).first()
+            query = text(f"SELECT text, timestamp, is_read FROM messages_dialog_{dialog.id} ORDER BY timestamp DESC LIMIT 1")
+            last_message = db.session.execute(query).mappings().first()
 
             dialog_data = {
                 "type": "dialog",
@@ -573,9 +642,9 @@ def get_conversations():
                     "avatar": other_user.avatar
                 },
                 "last_message": {
-                    "text": last_message.text if last_message else None,
-                    "timestamp": last_message.timestamp if last_message else None,
-                    "is_read": last_message.is_read if last_message else None
+                    "text": last_message['text'] if last_message else None,
+                    "timestamp": last_message['timestamp'] if last_message else None,
+                    "is_read": last_message['is_read'] if last_message else None
                 },
                 "count_msg": dialog.count_msg,
                 "can_delete": dialog.can_delete,
@@ -677,12 +746,19 @@ def delete_dialog_messages(dialog_id):
         if dialog.id_user1 != user_id and dialog.id_user2 != user_id:
             return jsonify({"error": "You are not a participant in this dialog"}), 403
 
-        messages = Message.query.filter_by(id_dialog=dialog_id).all()
+        message_query = text(f"SELECT id, images, file, voice FROM messages_dialog_{dialog_id}")
+        messages = db.session.execute(message_query).mappings().all()
         # Удаление файлов для каждого сообщения
         for message in messages:
-            delete_files_for_message(message)
+            if message['images']:
+                delete_files_for_message(dialog_id, message['images'], 'photos')
+            elif message['file']:
+                delete_files_for_message(dialog_id, message['file'], 'files')
+            elif message['voice']:
+                delete_files_for_message(dialog_id, message['voice'], 'audio')
 
-        Message.query.filter_by(id_dialog=dialog_id).delete()
+        delete_messages_query = text(f"DELETE FROM messages_dialog_{dialog_id}")
+        db.session.execute(delete_messages_query)
         db.session.commit()
 
         # Уведомление участников через WebSocket
@@ -692,7 +768,6 @@ def delete_dialog_messages(dialog_id):
 
         return jsonify({"message": "All messages in the dialog deleted successfully"}), 200
     except Exception as e:
-        db.session.rollback()  # Откат транзакции в случае ошибки
         return jsonify({"error": str(e)}), 500
 
 
@@ -800,7 +875,7 @@ def handle_join_dialog(data):
             emit('user_joined', {'dialog_id': dialog_id, 'user_id': user_id}, room=f'dialog_{dialog_id}')
             logger.info(f"Joined Dialog ID: {dialog_id}")
     except ExpiredSignatureError:
-        logger.info("Token expired")
+        logger.info("Token expired catched")
         emit('token_expired', {'message': 'Token has expired'})
         disconnect()  # Разрываем соединение
     except Exception as e:

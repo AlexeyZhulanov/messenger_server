@@ -11,7 +11,7 @@ import logging
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-socketio = SocketIO(app, cors_allowed_origins="*")  # Поддержка CORS для клиента
+socketio = SocketIO(app, cors_allowed_origins="*", message_queue='redis://localhost:6379')  # Поддержка CORS для клиента + многопоточность для сокетов
 redis_broker = RedisBroker(host="localhost", port=6379)
 dramatiq.set_broker(redis_broker)
 

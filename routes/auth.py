@@ -3,8 +3,9 @@ from flask_jwt_extended import create_access_token, jwt_required, get_jwt_identi
 from werkzeug.security import generate_password_hash, check_password_hash
 from models import db, User
 from flask_socketio import emit
+from .uploads import delete_avatar_file_if_exists
 from datetime import datetime, timezone
-from app import logger, socketio
+from app import socketio, logger
 
 auth_bp = Blueprint('auth', __name__)
 
@@ -17,7 +18,7 @@ def register():
 
         if existing_user:
             return jsonify({'error': 'User with this name already exists'}), 400
-
+        
         hashed_password = generate_password_hash(data['password'], method='pbkdf2:sha256')
         new_user = User(name=data['name'], password=hashed_password, username=data['username'])
         db.session.add(new_user)
@@ -53,8 +54,12 @@ def update_profile():
         user.username = data.get('username', user.username)
         avatar = data.get('avatar', user.avatar)
         if avatar == "delete":
+            if user.avatar:
+                delete_avatar_file_if_exists(user.avatar)
             user.avatar = None
-        else:
+        elif avatar:
+            if user.avatar:
+                delete_avatar_file_if_exists(user.avatar)
             user.avatar = avatar
         db.session.commit()
         return jsonify({'message': 'Profile updated successfully'}), 200
@@ -62,7 +67,7 @@ def update_profile():
         return jsonify({'error': str(e)}), 500
 
 
-@auth_bp.route('/profile/update_password', methods=['PUT'])
+@auth_bp.route('/update_password', methods=['PUT'])
 @jwt_required()
 def update_password():
     try:

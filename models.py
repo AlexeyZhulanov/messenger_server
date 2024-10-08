@@ -1,5 +1,6 @@
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy.sql import func
+from sqlalchemy import text
 
 db = SQLAlchemy()
 
@@ -32,6 +33,40 @@ def decrement_message_count(dialog_id=None, group_id=None, count=1):
             db.session.commit()
 
 
+def create_message_table(dialog_id):
+    table_name = f"messages_dialog_{dialog_id}"
+    
+    # Проверка, существует ли таблица
+    table_exists_query = text(f'''
+        SELECT EXISTS (
+            SELECT FROM information_schema.tables 
+            WHERE table_name = :table_name
+        );
+    ''')
+    table_exists = db.session.execute(table_exists_query, {'table_name': table_name}).scalar()
+
+    # Если таблица не существует, создаем её
+    if not table_exists:
+        create_table_query = text(f'''
+            CREATE TABLE {table_name} (
+                id SERIAL PRIMARY KEY,
+                id_sender INTEGER NOT NULL,
+                text TEXT,
+                images TEXT[],
+                voice TEXT,
+                file TEXT,
+                is_edited BOOLEAN DEFAULT FALSE,
+                is_forwarded BOOLEAN DEFAULT FALSE,
+                is_read BOOLEAN DEFAULT FALSE,
+                reference_to_message_id INTEGER,
+                username_author_original TEXT,
+                timestamp TIMESTAMPTZ DEFAULT NOW()
+            );
+        ''')
+        db.session.execute(create_table_query)
+        db.session.commit()
+
+
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(50), nullable=False, unique=True)
@@ -42,7 +77,6 @@ class User(db.Model):
 
     dialogs_as_user1 = db.relationship('Dialog', foreign_keys='Dialog.id_user1', backref='user1', lazy=True)
     dialogs_as_user2 = db.relationship('Dialog', foreign_keys='Dialog.id_user2', backref='user2', lazy=True)
-    messages_sent = db.relationship('Message', backref='sender', lazy=True)
     group_messages_sent = db.relationship('GroupMessage', backref='sender', lazy=True)
     groups_created = db.relationship('Group', backref='creator', lazy=True)
 
@@ -56,27 +90,7 @@ class Dialog(db.Model):
     can_delete = db.Column(db.Boolean, default=False)
     auto_delete_interval = db.Column(db.Integer, default=0)
 
-    messages = db.relationship('Message', backref='dialog', lazy=True)
-
     __table_args__ = (db.UniqueConstraint('id_user1', 'id_user2', name='unique_dialog_users'),)
-
-
-class Message(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    id_dialog = db.Column(db.Integer, db.ForeignKey('dialog.id'), nullable=False)
-    id_sender = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
-    text = db.Column(db.Text)
-    images = db.Column(db.ARRAY(db.String))
-    voice = db.Column(db.String)
-    file = db.Column(db.String)
-    is_read = db.Column(db.Boolean, default=False)
-    is_edited = db.Column(db.Boolean, default=False)
-    is_forwarded = db.Column(db.Boolean, default=False)
-    timestamp = db.Column(db.DateTime, server_default=func.now())
-    reference_to_message_id = db.Column(db.Integer, db.ForeignKey('message.id'))
-    username_author_original = db.Column(db.String(50))
-
-    reference_to_message = db.relationship('Message', remote_side=[id], post_update=True)
 
 
 class Group(db.Model):
