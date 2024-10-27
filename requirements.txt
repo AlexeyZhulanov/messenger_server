@@ -10,3 +10,6 @@ eventlet
 dramatiq
 dramatiq[redis]
 redis
+Pillow
+ffmpeg-python
+ffmpeg

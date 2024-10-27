@@ -1,6 +1,7 @@
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy.sql import func
 from sqlalchemy import text
+from datetime import datetime
 
 db = SQLAlchemy()
 
@@ -128,3 +129,22 @@ class GroupMessage(db.Model):
     username_author_original = db.Column(db.String(50))
 
     reference_to_message = db.relationship('GroupMessage', remote_side=[id], post_update=True)
+
+
+class Log(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    id_user = db.Column(db.Integer, nullable=False)
+    id_dialog = db.Column(db.Integer, nullable=True)
+    id_group = db.Column(db.Integer, nullable=True)
+    timestamp = db.Column(db.String, default=lambda: datetime.now().strftime("%H:%M, %d %b %Y"), nullable=False)
+    action = db.Column(db.String(255), nullable=False)
+    content = db.Column(db.String(255), nullable=True)
+    is_successful = db.Column(db.Boolean, default=True, nullable=False)
+    
+    def __init__(self, id_user, action, id_dialog=None, id_group=None, content=None, is_successful=True):
+        self.id_user = id_user
+        self.id_dialog = id_dialog
+        self.id_group = id_group
+        self.action = action
+        self.content = content
+        self.is_successful = is_successful

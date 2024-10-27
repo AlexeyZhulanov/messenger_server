@@ -1,7 +1,7 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity, decode_token
 from flask_socketio import emit, join_room, leave_room, disconnect
-from models import (db, Dialog, User, Group, GroupMessage, GroupMember, increment_message_count,
+from models import (db, Dialog, User, Group, GroupMessage, GroupMember, Log, increment_message_count,
                     decrement_message_count, create_message_table)
 from .uploads import delete_file_from_disk
 from app import socketio, logger, dramatiq, app
@@ -21,6 +21,9 @@ def create_dialog():
         other_user = User.query.filter_by(name=data['name']).first()
 
         if not other_user:
+            log = Log(id_user=user_id, action="create_dialog", content=f"Failed: User '{data['name']}' not found", is_successful=False)
+            db.session.add(log)
+            db.session.commit()
             return jsonify({'message': 'User not found'}), 404
 
         # Проверка на существование диалога
@@ -30,6 +33,9 @@ def create_dialog():
         ).first()
 
         if existing_dialog:
+            log = Log(id_user=user_id, action="create_dialog", content="Failed: Dialog already exists", is_successful=False)
+            db.session.add(log)
+            db.session.commit()
             return jsonify({'message': 'Dialog already exists'}), 409
 
         # Создание нового диалога
@@ -45,6 +51,9 @@ def create_dialog():
         db.session.execute(text(insert_message_query), {'id_sender': user_id, 'text': f'{user.username} has created a dialog'})
         db.session.commit()
         increment_message_count(dialog_id=new_dialog.id)
+        log = Log(id_user=user_id, action="create_dialog", content=f"Dialog created with {other_user.name}")
+        db.session.add(log)
+        db.session.commit()
 
         # Уведомление участников через WebSocket
         socketio.emit('dialog_created', {
@@ -54,6 +63,10 @@ def create_dialog():
 
         return jsonify({'message': 'Dialog created successfully'}), 201
     except Exception as e:
+        db.session.rollback()
+        log = Log(id_user=user_id, action="create_dialog", content=str(e)[:200], is_successful=False)
+        db.session.add(log)
+        db.session.commit()
         return jsonify({'error': str(e)}), 500
 
 
@@ -79,6 +92,11 @@ def send_message(id_dialog):
         # Проверка на участие отправителя в диалоге
         if dialog.id_user1 != id_sender and dialog.id_user2 != id_sender:
             return jsonify({"error": "You are not a participant in this dialog"}), 403
+
+        if file:  
+            log = Log(id_user=id_sender, id_dialog=id_dialog, action="send_message", content=f"User sent a file: {file}")
+            db.session.add(log)
+            db.session.commit()
 
         # Создание таблицы сообщений для диалога, если она не существует
         # create_message_table(id_dialog)
@@ -296,10 +314,16 @@ def edit_message(message_id):
         message = db.session.execute(select_message_query, {'message_id': message_id}).mappings().first()
 
         if not message:
+            log = Log(id_user=id_user, action="edit_message", content=f"Message {message_id} not found", is_successful=False)
+            db.session.add(log)
+            db.session.commit()
             return jsonify({'message': 'Message not found'}), 404
         if message['id_sender'] != id_user:
+            log = Log(id_user=id_user, action="edit_message", content="Attempted unauthorized edit", is_successful=False)
+            db.session.add(log)
+            db.session.commit()
             return jsonify({'message': 'You can only edit your own messages'}), 403
-
+        
         # Обновляем поля
         updated = False
 
@@ -327,6 +351,9 @@ def edit_message(message_id):
             updated = True
 
         if updated:
+            log = Log(id_user=id_user, id_dialog=id_dialog, action="edit_message", content=f"Message was edited, old message: text: {message.get('text', '')[:150] if message.get('text') else ''}, "
+            f"file: {message.get('file', '')[:50] if message.get('file') else ''}")
+            db.session.add(log)
             db.session.commit()
 
             # Уведомляем через WebSocket
@@ -350,6 +377,9 @@ def edit_message(message_id):
 
     except Exception as e:
         db.session.rollback()
+        log = Log(id_user=id_user, action="edit_message", content=str(e)[:200], is_successful=False)
+        db.session.add(log)
+        db.session.commit()
         return jsonify({'error': str(e)}), 500
 
 
@@ -368,30 +398,45 @@ def delete_files_for_message(id_dialog, file_names, folder):
 @jwt_required()
 def delete_messages(id_dialog):
     try:
+        user_id = get_jwt_identity()
         data = request.get_json()
         message_ids = data.get('message_ids', [])
 
         if not message_ids:
+            log = Log(id_user=user_id, id_dialog=id_dialog, action="delete_message", content="Bad attempt to delete message(message IDs provided)", is_successful=False)
+            db.session.add(log)
+            db.session.commit()
             return jsonify({"error": "No message IDs provided"}), 400
 
         table_name = f'messages_dialog_{id_dialog}'
         
         # Запрос на получение сообщений для удаления
-        select_messages_query = text(f'SELECT id, images, file, voice FROM {table_name} WHERE id IN :message_ids')
+        select_messages_query = text(f'SELECT id, images, file, voice, text FROM {table_name} WHERE id IN :message_ids')
         messages = db.session.execute(select_messages_query, {'message_ids': tuple(message_ids)}).mappings().all()
 
         if not messages:
+            log = Log(id_user=user_id, id_dialog=id_dialog, action="delete_message", content="Bad attempt to delete message(Some messages not found)", is_successful=False)
+            db.session.add(log)
+            db.session.commit()
             return jsonify({"error": "Some messages not found"}), 404
 
         # Удаление файлов и сообщений
         for message in messages:
+            content = ""
             if message['images']:
                 delete_files_for_message(id_dialog, message['images'], 'photos')  # Удаляем изображения
+                content += f"Deleted images: {message['images']}"
             elif message['file']:
                 delete_files_for_message(id_dialog, message['file'], 'files')   # Удаляем файлы
+                content += f"Deleted file: {message['file']}"
             elif message['voice']:
                 delete_files_for_message(id_dialog, message['voice'], 'audio')  # Удаляем голосовые сообщения
+                content += f"Deleted voice message: {message['voice']}"
+            if message['text']:
+                content += f" Deleted text message: {message['text']}"
 
+            log_entry = Log(id_user=user_id, id_dialog=id_dialog, action="delete_message", content=content[:255])
+            db.session.add(log_entry)
             sql_delete = text(f"DELETE FROM {table_name} WHERE id = :message_id")
             db.session.execute(sql_delete, {'message_id': message['id']})
 
@@ -408,6 +453,9 @@ def delete_messages(id_dialog):
         return jsonify({"message": "Messages deleted successfully"}), 200
     except Exception as e:
         db.session.rollback()
+        log_entry = Log(id_user=user_id, id_dialog=id_dialog, action="delete_message", content=str(e)[:200], is_successful=False)
+        db.session.add(log_entry)
+        db.session.commit()
         return jsonify({"error": str(e)}), 500
 
 
@@ -419,9 +467,15 @@ def delete_dialog(dialog_id):
         user_id = get_jwt_identity()
         dialog = Dialog.query.get(dialog_id)
         if not dialog:
+            log = Log(id_user=user_id, id_dialog=dialog_id, action="delete_dialog", content="Bad attempt to delete dialog(dialog not found)", is_successful=False)
+            db.session.add(log)
+            db.session.commit()
             return jsonify({"error": "Dialog not found"}), 404
 
         if dialog.id_user1 != user_id and dialog.id_user2 != user_id:
+            log = Log(id_user=user_id, id_dialog=dialog_id, action="delete_dialog", content="Bad attempt to delete dialog(user is not a participant in dialog)", is_successful=False)
+            db.session.add(log)
+            db.session.commit()
             return jsonify({"error": "You are not a participant in this dialog"}), 403
 
         # Определяем имя таблицы с сообщениями для данного диалога
@@ -448,6 +502,10 @@ def delete_dialog(dialog_id):
         db.session.delete(dialog)
         db.session.commit()
 
+        log = Log(id_user=user_id, id_dialog=dialog_id, action="delete_dialog", content="Dialog successfully deleted")
+        db.session.add(log)
+        db.session.commit()
+
         # Уведомляем участников через WebSocket
         socketio.emit('dialog_deleted', {
             'dialog_id': dialog_id
@@ -456,6 +514,9 @@ def delete_dialog(dialog_id):
         return jsonify({"message": "Dialog deleted successfully"}), 200
     except Exception as e:
         db.session.rollback()
+        log = Log(id_user=user_id, id_dialog=dialog_id, action="delete_dialog", content=str(e)[:200], is_successful=False)
+        db.session.add(log)
+        db.session.commit()
         return jsonify({"error": str(e)}), 500
 
 
@@ -484,14 +545,23 @@ def delete_messages_task(message_ids, dialog_id):
         try:
             table_name = f'messages_dialog_{dialog_id}'
             for message_id in message_ids:
-                get_files_query = text(f'''SELECT images, voice, file FROM {table_name} WHERE id = :message_id''')
+                content = ""
+                get_files_query = text(f'''SELECT images, voice, file, text FROM {table_name} WHERE id = :message_id''')
                 message = db.session.execute(get_files_query, {'message_id': message_id}).mappings().first()
                 if message['images']:
                     delete_files_for_message(dialog_id, message['images'], 'photos')
+                    content += f"Deleted images: {message['images']}"
                 elif message['file']:
                     delete_files_for_message(dialog_id, message['file'], 'files')
+                    content += f"Deleted file: {message['file']}"
                 elif message['voice']:
                     delete_files_for_message(dialog_id, message['voice'], 'audio')
+                    content += f"Deleted voice: {message['voice']}"
+                if message['text']:
+                    content += f" Deleted text message: {message['text']}"
+
+                log_entry = Log(id_user=-1, id_dialog=dialog_id, action="delete_message", content=content[:255])
+                db.session.add(log_entry) 
 
             # Удаление сообщений
             delete_messages_query = text(f'''DELETE FROM messages_dialog_{dialog_id} WHERE id IN :message_ids''')
@@ -507,6 +577,9 @@ def delete_messages_task(message_ids, dialog_id):
 
         except Exception as e:
             db.session.rollback()
+            log_entry = Log(id_user=-1, id_dialog=dialog_id, action="delete_message", content=str(e)[:200], is_successful=False)
+            db.session.add(log_entry)
+            db.session.commit()
             print(f"Error deleting messages: {str(e)}")
 
 
@@ -719,17 +792,29 @@ def update_dialog_auto_delete_interval(dialog_id):
 
         dialog = Dialog.query.get(dialog_id)
         if not dialog:
+            log = Log(id_user=user_id, id_dialog=dialog_id, action="update_dialog_auto_delete_interval", content="Failed to change auto delete interval(Dialog not found)", is_successful=False)
+            db.session.add(log)
+            db.session.commit()
             return jsonify({"error": "Dialog not found"}), 404
 
         # Проверка, что пользователь является участником диалога
         if dialog.id_user1 != user_id and dialog.id_user2 != user_id:
+            log = Log(id_user=user_id, id_dialog=dialog_id, action="update_dialog_auto_delete_interval", content="Failed to change auto delete interval(User is not a participant in dialog)", is_successful=False)
+            db.session.add(log)
+            db.session.commit()
             return jsonify({"error": "You are not a participant in this dialog"}), 403
-
+        
+        log = Log(id_user=user_id, id_dialog=dialog_id, action="update_dialog_auto_delete_interval", content=f"Successfully updated interval to {auto_delete_interval}")
+        db.session.add(log)
         dialog.auto_delete_interval = auto_delete_interval
         db.session.commit()
         return jsonify({"message": "Dialog auto_delete_interval updated successfully",
                         "auto_delete_interval": dialog.auto_delete_interval}), 200
     except Exception as e:
+        db.session.rollback()
+        log = Log(id_user=user_id, id_dialog=dialog_id, action="update_dialog_auto_delete_interval", content=str(e)[:200], is_successful=False)
+        db.session.add(log)
+        db.session.commit()
         return jsonify({"error": str(e)}), 500
 
 
@@ -740,10 +825,16 @@ def delete_dialog_messages(dialog_id):
         user_id = get_jwt_identity()
         dialog = Dialog.query.get(dialog_id)
         if not dialog:
+            log = Log(id_user=user_id, id_dialog=dialog_id, action="delete_dialog_messages", content="Failed to delete messages(Dialog not found)", is_successful=False)
+            db.session.add(log)
+            db.session.commit()
             return jsonify({"error": "Dialog not found"}), 404
 
         # Проверка, что пользователь является участником диалога
         if dialog.id_user1 != user_id and dialog.id_user2 != user_id:
+            log = Log(id_user=user_id, id_dialog=dialog_id, action="delete_dialog_messages", content="Failed to delete messages(User is not a participant in dialog)", is_successful=False)
+            db.session.add(log)
+            db.session.commit()
             return jsonify({"error": "You are not a participant in this dialog"}), 403
 
         message_query = text(f"SELECT id, images, file, voice FROM messages_dialog_{dialog_id}")
@@ -761,6 +852,10 @@ def delete_dialog_messages(dialog_id):
         db.session.execute(delete_messages_query)
         db.session.commit()
 
+        log = Log(id_user=user_id, id_dialog=dialog_id, action="delete_dialog_messages", content="All messages successfully deleted")
+        db.session.add(log)
+        db.session.commit()
+
         # Уведомление участников через WebSocket
         socketio.emit('dialog_messages_all_deleted', {
             'dialog_id': dialog_id
@@ -768,6 +863,10 @@ def delete_dialog_messages(dialog_id):
 
         return jsonify({"message": "All messages in the dialog deleted successfully"}), 200
     except Exception as e:
+        db.session.rollback()
+        log = Log(id_user=user_id, id_dialog=dialog_id, action="delete_dialog_messages", content=str(e)[:200], is_successful=False)
+        db.session.add(log)
+        db.session.commit()
         return jsonify({"error": str(e)}), 500
 
 

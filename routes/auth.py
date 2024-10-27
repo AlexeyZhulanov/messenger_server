@@ -1,8 +1,7 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import create_access_token, jwt_required, get_jwt_identity
 from werkzeug.security import generate_password_hash, check_password_hash
-from models import db, User
-from flask_socketio import emit
+from models import db, User, Log
 from .uploads import delete_avatar_file_if_exists
 from datetime import datetime, timezone
 from app import socketio, logger
@@ -23,6 +22,7 @@ def register():
         new_user = User(name=data['name'], password=hashed_password, username=data['username'])
         db.session.add(new_user)
         db.session.commit()
+        logger.info(f"New user registered, his name: {new_user.name}")
         return jsonify({'message': 'Registered successfully'}), 201
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -61,6 +61,7 @@ def update_profile():
             if user.avatar:
                 delete_avatar_file_if_exists(user.avatar)
             user.avatar = avatar
+            logger.info(f"User {user.name} updated his avatar: {avatar}")
         db.session.commit()
         return jsonify({'message': 'Profile updated successfully'}), 200
     except Exception as e:
@@ -74,17 +75,29 @@ def update_password():
         user_id = get_jwt_identity()
         user = User.query.get(user_id)
         if not user:
+            log = Log(id_user=user_id, action="update_password", content="Failed to change password(User not found)", is_successful=False)
+            db.session.add(log)
+            db.session.commit()
             return jsonify({"error": "User not found"}), 404
 
         data = request.get_json()
         new_password = data.get('password')
         if not new_password:
+            log = Log(id_user=user_id, action="update_password", content="Failed to change password(No new password provided)", is_successful=False)
+            db.session.add(log)
+            db.session.commit()
             return jsonify({"error": "No new password provided"}), 400
 
         user.password = generate_password_hash(new_password, method='pbkdf2:sha256')
+        log = Log(id_user=user_id, action="update_password", content="Password successfully updated")
+        db.session.add(log)
         db.session.commit()
         return jsonify({"message": "Password updated successfully"}), 200
     except Exception as e:
+        db.session.rollback()
+        log = Log(id_user=user_id, action="update_password", content=str(e)[:200], is_successful=False)
+        db.session.add(log)
+        db.session.commit()
         return jsonify({"error": str(e)}), 500
 
 
