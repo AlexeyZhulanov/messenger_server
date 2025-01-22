@@ -7,6 +7,7 @@ from .uploads import delete_file_from_disk
 from app import socketio, logger, dramatiq, app
 from jwt.exceptions import ExpiredSignatureError
 from sqlalchemy import text
+from datetime import timezone, timedelta
 
 
 messages_bp = Blueprint('messages', __name__)
@@ -333,19 +334,22 @@ def edit_message(message_id):
             updated = True
 
         if 'images' in data and message['images'] != data['images']:
-            delete_files_for_message(id_dialog, message['images'], 'photos')  # Удаляем старые изображения
+            images_to_remove = [img for img in message['images'] if img not in data['images']]
+            delete_files_for_message(id_dialog, images_to_remove, 'photos')  # Удаляем старые изображения
             sql_update = text(f"UPDATE {table_name} SET images = :images, is_edited = TRUE WHERE id = :message_id")
             db.session.execute(sql_update, {'images': data['images'], 'message_id': message_id})
             updated = True
 
         if 'file' in data and message['file'] != data['file']:
-            delete_files_for_message(id_dialog, message['file'], 'files')  # Удаляем старый файл
+            if message['file']:
+                delete_files_for_message(id_dialog, message['file'], 'files')  # Удаляем старый файл
             sql_update = text(f"UPDATE {table_name} SET file = :file, is_edited = TRUE WHERE id = :message_id")
             db.session.execute(sql_update, {'file': data['file'], 'message_id': message_id})
             updated = True
 
         if 'voice' in data and message['voice'] != data['voice']:
-            delete_files_for_message(id_dialog, message['voice'], 'audio')  # Удаляем старый голосовой файл
+            if message['voice']:
+                delete_files_for_message(id_dialog, message['voice'], 'audio')  # Удаляем старый голосовой файл
             sql_update = text(f"UPDATE {table_name} SET voice = :voice, is_edited = TRUE WHERE id = :message_id")
             db.session.execute(sql_update, {'voice': data['voice'], 'message_id': message_id})
             updated = True
@@ -666,6 +670,7 @@ def search_messages_in_dialog(dialog_id):
     table_name = f'messages_dialog_{dialog_id}'
 
     # Полнотекстовый поиск по партицированной таблице сообщений
+    search_text = ' & '.join([f'{word}:*' for word in search_text.split()])
     search_query = text(f"SELECT * FROM {table_name} WHERE to_tsvector('simple', text) @@ to_tsquery('simple', :search_text)")
     messages = db.session.execute(search_query, {'search_text': search_text}).mappings().all()
 
@@ -754,8 +759,8 @@ def get_conversations():
 
         # Объединение и сортировка диалогов и групп по времени последнего сообщения
         conversations = dialog_list + group_list
-        sorted_conversations = sorted(conversations, key=lambda x: x['last_message']['timestamp'] if x['last_message'][
-            'timestamp'] else 0, reverse=True)
+        sorted_conversations = sorted(conversations, key=lambda x: x['last_message']['timestamp'].astimezone(timezone(timedelta(hours=3))) if x['last_message']['timestamp'] else 0, reverse=True)
+
 
         return jsonify(sorted_conversations), 200
     except Exception as e:
@@ -913,7 +918,7 @@ def handle_typing_event(data):
         dialog_id = data.get('dialog_id')
 
         if dialog_id:
-            emit('typing', {'dialog_id': dialog_id, 'user_id': user_id}, room=f'dialog_{dialog_id}')
+            emit('typing', {'dialog_id': dialog_id, 'user_id': user_id}, room=f'dialog_{dialog_id}', skip_sid=request.sid)
     except Exception as e:
         logger.info(f"Invalid token: {e}")
         disconnect()
@@ -941,7 +946,7 @@ def handle_stop_typing_event(data):
         dialog_id = data.get('dialog_id')
 
         if dialog_id:
-            emit('stop_typing', {'dialog_id': dialog_id, 'user_id': user_id}, room=f'dialog_{dialog_id}')
+            emit('stop_typing', {'dialog_id': dialog_id, 'user_id': user_id}, room=f'dialog_{dialog_id}', skip_sid=request.sid)
     except Exception as e:
         logger.info(f"Invalid token: {e}")
         disconnect()
@@ -971,7 +976,7 @@ def handle_join_dialog(data):
         if dialog_id:
             # Присоединяем пользователя к комнате, соответствующей диалогу
             join_room(f'dialog_{dialog_id}')
-            emit('user_joined', {'dialog_id': dialog_id, 'user_id': user_id}, room=f'dialog_{dialog_id}')
+            emit('user_joined', {'dialog_id': dialog_id, 'user_id': user_id}, room=f'dialog_{dialog_id}', skip_sid=request.sid)
             logger.info(f"Joined Dialog ID: {dialog_id}")
     except ExpiredSignatureError:
         logger.info("Token expired catched")
@@ -1006,7 +1011,7 @@ def handle_leave_dialog(data):
 
         if dialog_id:
             leave_room(f'dialog_{dialog_id}')
-            emit('user_left', {'dialog_id': dialog_id, 'user_id': user_id}, room=f'dialog_{dialog_id}')
+            emit('user_left', {'dialog_id': dialog_id, 'user_id': user_id}, room=f'dialog_{dialog_id}', skip_sid=request.sid)
     except Exception as e:
         logger.info(f"Invalid token: {e}")
         disconnect()

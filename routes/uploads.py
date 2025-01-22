@@ -8,6 +8,7 @@ from app import logger
 
 uploads_bp = Blueprint('uploads', __name__)
 
+ALLOWED_ONLY_PHOTO_EXTENSIONS = {'jpg', 'jpeg', 'png'}
 ALLOWED_PHOTO_EXTENSIONS = {'jpg', 'jpeg', 'png', 'gif', 'mp4', 'avi', 'mpeg', 'mov', 'mkv'} # photo+video
 ALLOWED_AUDIO_EXTENSIONS = {'mp3', 'wav', 'ogg', 'pcm'}
 ALLOWED_FILE_EXTENSIONS = {'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx'}
@@ -45,9 +46,12 @@ def create_partitioned_path(dialog_id, folder, subfolder_type='original'):
         'FILES': current_app.config['UPLOAD_FOLDER_FILES']
     }.get(folder.upper())
 
-    partitioned_path = os.path.join(base_folder, subfolder, str(dialog_id), subfolder_type)
-    
-    # Создаем директорию, если она не существует
+    # Полный путь с учетом subfolder_type (если он не пустой)
+    partitioned_path = os.path.join(base_folder, subfolder, str(dialog_id))
+    if subfolder_type:
+        partitioned_path = os.path.join(partitioned_path, subfolder_type)
+
+    # Создаем директорию только если есть указание на подкаталог
     os.makedirs(partitioned_path, exist_ok=True)
 
     return partitioned_path
@@ -56,7 +60,9 @@ def create_partitioned_path(dialog_id, folder, subfolder_type='original'):
 def save_file(file, dialog_id, folder, allowed_extensions):
     if file and allowed_file(file.filename, allowed_extensions):
         # Создаем путь с учетом партицирования
-        partitioned_path = create_partitioned_path(dialog_id, folder, 'original')
+        is_image_or_video = folder.upper() in ['PHOTOS']
+        subfolder_type = 'original' if is_image_or_video else ''
+        partitioned_path = create_partitioned_path(dialog_id, folder, subfolder_type)
         
         # Проверяем и создаем уникальное имя файла
         unique_filename = generate_unique_filename(partitioned_path, file.filename)
@@ -303,6 +309,23 @@ def delete_file(folder, dialog_id, filename):
         return jsonify({'error': msg}), 400
 
 
+def get_preview_path(base_folder_path, filename):
+    file_extension = filename.lower().rsplit('.', 1)[-1]
+
+    if file_extension in ALLOWED_ONLY_PHOTO_EXTENSIONS:
+        return os.path.join(base_folder_path, 'preview', filename)
+    
+    preview_folder = os.path.join(base_folder_path, 'preview')
+
+    if os.path.exists(preview_folder):
+        preview_filename_prefix = os.path.splitext(filename)[0]
+        preview_file = next((f for f in os.listdir(preview_folder) if f.startswith(preview_filename_prefix)), None)
+        if preview_file:
+            return os.path.join(preview_folder, preview_file)
+    
+    return None
+
+
 def delete_file_from_disk(folder, dialog_id, filename):
     folder_mapping = {
         'photos': current_app.config['UPLOAD_FOLDER_PHOTOS'],
@@ -313,8 +336,31 @@ def delete_file_from_disk(folder, dialog_id, filename):
     if folder not in folder_mapping:
         return False, 'Invalid folder'
 
-    # Строим путь с партицированием
-    file_path = os.path.join(current_app.config['UPLOAD_FOLDER_BASE'], folder_mapping[folder], dialog_id, filename)
+    # Базовый путь с партицированием
+    base_folder_path = os.path.join(current_app.config['UPLOAD_FOLDER_BASE'], folder_mapping[folder], dialog_id)
+
+    # Фото и видео
+    if folder == 'photos':
+        original_path = os.path.join(base_folder_path, 'original', filename)
+        preview_path = get_preview_path(base_folder_path, filename)
+
+        errors = []
+
+        for path in [original_path, preview_path]:
+            if os.path.exists(path):
+                try:
+                    os.remove(path)
+                except Exception as e:
+                    errors.append(f"Error deleting {path}: {str(e)}")
+            else:
+                errors.append(f"File not found: {path}")
+        
+        if errors:
+            return False, 'Some files could not be deleted: ' + '; '.join(errors)
+        return True, 'Original and preview photos deleted successfully'
+
+    # Файлы и аудио
+    file_path = os.path.join(base_folder_path, filename)
     
     if not os.path.exists(file_path):
         return False, 'File not found'
@@ -360,7 +406,7 @@ def get_dialog_medias(dialog_id, page=0, page_size=12):
 
 
 def get_dialog_files(dialog_id, page=0, page_size=10):
-    files_folder = create_partitioned_path(dialog_id, 'FILES')
+    files_folder = create_partitioned_path(dialog_id, 'FILES', '')
     all_files = []
     
     # Собираем все файлы с разрешенными расширениями
@@ -377,7 +423,7 @@ def get_dialog_files(dialog_id, page=0, page_size=10):
 
 
 def get_dialog_audios(dialog_id, page=0, page_size=20):
-    audio_folder = create_partitioned_path(dialog_id, 'AUDIO')
+    audio_folder = create_partitioned_path(dialog_id, 'AUDIO', '')
     all_files = []
     
     # Собираем все аудиофайлы с разрешенными расширениями
