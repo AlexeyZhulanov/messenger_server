@@ -34,8 +34,8 @@ def decrement_message_count(dialog_id=None, group_id=None, count=1):
             db.session.commit()
 
 
-def create_message_table(dialog_id):
-    table_name = f"messages_dialog_{dialog_id}"
+def create_message_table(conv_id, is_group=False):
+    table_name = f"messages_group_{conv_id}" if is_group else f"messages_dialog_{conv_id}"
     
     # Проверка, существует ли таблица
     table_exists_query = text(f'''
@@ -67,6 +67,15 @@ def create_message_table(dialog_id):
         db.session.execute(create_table_query)
         db.session.commit()
 
+        # Создание GIN-индекса для полнотекстового поиска
+        create_index_query = text(f'''
+            CREATE INDEX idx_{table_name}_text_ft 
+            ON {table_name} 
+            USING gin(to_tsvector('simple', text));
+        ''')
+        db.session.execute(create_index_query)
+        db.session.commit()
+
 
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -75,10 +84,12 @@ class User(db.Model):
     password = db.Column(db.String(256), nullable=False)
     avatar = db.Column(db.String(256))
     last_session = db.Column(db.DateTime, server_default=func.now(), onupdate=func.now())
+    vacation_start = db.Column(db.Date, nullable=True)
+    vacation_end = db.Column(db.Date, nullable=True)
+    permission = db.Column(db.Integer, nullable=False, server_default="0") # User - 0, Moderator - 1
 
     dialogs_as_user1 = db.relationship('Dialog', foreign_keys='Dialog.id_user1', backref='user1', lazy=True)
     dialogs_as_user2 = db.relationship('Dialog', foreign_keys='Dialog.id_user2', backref='user2', lazy=True)
-    group_messages_sent = db.relationship('GroupMessage', backref='sender', lazy=True)
     groups_created = db.relationship('Group', backref='creator', lazy=True)
 
 
@@ -98,13 +109,11 @@ class Group(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(50), nullable=False)
     created_by = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
-    avatar = db.Column(db.String(256), default="default.png")
+    avatar = db.Column(db.String(256))
+    key = db.Column(db.String(256))
     count_msg = db.Column(db.Integer, default=0)
     can_delete = db.Column(db.Boolean, default=False)
     auto_delete_interval = db.Column(db.Integer, default=0)
-
-    members = db.relationship('GroupMember', backref='group', lazy=True)
-    messages = db.relationship('GroupMessage', backref='group', lazy=True)
 
 
 class GroupMember(db.Model):
@@ -113,22 +122,17 @@ class GroupMember(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
 
 
-class GroupMessage(db.Model):
+class News(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    group_id = db.Column(db.Integer, db.ForeignKey('group.id'), nullable=False)
-    id_sender = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    written_by = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    header_text = db.Column(db.Text)
     text = db.Column(db.Text)
     images = db.Column(db.ARRAY(db.String))
-    voice = db.Column(db.String)
-    file = db.Column(db.String)
-    is_read = db.Column(db.Boolean, default=False)
+    voices = db.Column(db.ARRAY(db.String))
+    files = db.Column(db.ARRAY(db.String))
     is_edited = db.Column(db.Boolean, default=False)
-    is_forwarded = db.Column(db.Boolean, default=False)
+    views_count = db.Column(db.Integer, default=0)
     timestamp = db.Column(db.DateTime, server_default=func.now())
-    reference_to_message_id = db.Column(db.Integer, db.ForeignKey('group_message.id'))
-    username_author_original = db.Column(db.String(50))
-
-    reference_to_message = db.relationship('GroupMessage', remote_side=[id], post_update=True)
 
 
 class Log(db.Model):

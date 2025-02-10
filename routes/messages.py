@@ -1,7 +1,7 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity, decode_token
 from flask_socketio import emit, join_room, leave_room, disconnect
-from models import (db, Dialog, User, Group, GroupMessage, GroupMember, Log, increment_message_count,
+from models import (db, Dialog, User, Group, GroupMember, Log, increment_message_count,
                     decrement_message_count, create_message_table)
 from .uploads import delete_file_from_disk
 from app import socketio, logger, dramatiq, app
@@ -25,7 +25,7 @@ def create_dialog():
             log = Log(id_user=user_id, action="create_dialog", content=f"Failed: User '{data['name']}' not found", is_successful=False)
             db.session.add(log)
             db.session.commit()
-            return jsonify({'message': 'User not found'}), 404
+            return jsonify({'error': 'User not found'}), 404
 
         # Проверка на существование диалога
         existing_dialog = Dialog.query.filter(
@@ -37,7 +37,7 @@ def create_dialog():
             log = Log(id_user=user_id, action="create_dialog", content="Failed: Dialog already exists", is_successful=False)
             db.session.add(log)
             db.session.commit()
-            return jsonify({'message': 'Dialog already exists'}), 409
+            return jsonify({'error': 'Dialog already exists'}), 409
 
         # Создание нового диалога
         new_dialog = Dialog(id_user1=user_id, id_user2=other_user.id)
@@ -57,6 +57,7 @@ def create_dialog():
         db.session.commit()
 
         # Уведомление участников через WebSocket
+        # Пока что это не используется, возможно нужно будет удалить
         socketio.emit('dialog_created', {
             'dialog_id': new_dialog.id,
             'message': f"Dialog created between {user.username} and {other_user.username}"
@@ -307,8 +308,7 @@ def edit_message(message_id):
     try:
         id_user = get_jwt_identity()
         id_dialog = request.args.get('id_dialog')
-        data = request.get_json()
-
+    
         table_name = f'messages_dialog_{id_dialog}'
         # Проверка существования сообщения
         select_message_query = text(f'SELECT * FROM {table_name} WHERE id = :message_id')
@@ -318,13 +318,14 @@ def edit_message(message_id):
             log = Log(id_user=id_user, action="edit_message", content=f"Message {message_id} not found", is_successful=False)
             db.session.add(log)
             db.session.commit()
-            return jsonify({'message': 'Message not found'}), 404
+            return jsonify({'error': 'Message not found'}), 404
         if message['id_sender'] != id_user:
             log = Log(id_user=id_user, action="edit_message", content="Attempted unauthorized edit", is_successful=False)
             db.session.add(log)
             db.session.commit()
-            return jsonify({'message': 'You can only edit your own messages'}), 403
+            return jsonify({'error': 'You can only edit your own messages'}), 403
         
+        data = request.get_json()
         # Обновляем поля
         updated = False
 
@@ -450,7 +451,6 @@ def delete_messages(id_dialog):
 
         # Уведомляем участников через WebSocket
         socketio.emit('messages_deleted', {
-            'dialog_id': id_dialog,
             'deleted_message_ids': message_ids
         }, room=f'dialog_{id_dialog}')
 
@@ -461,7 +461,6 @@ def delete_messages(id_dialog):
         db.session.add(log_entry)
         db.session.commit()
         return jsonify({"error": str(e)}), 500
-
 
 
 @messages_bp.route('/dialogs/<int:dialog_id>', methods=['DELETE'])
@@ -511,9 +510,7 @@ def delete_dialog(dialog_id):
         db.session.commit()
 
         # Уведомляем участников через WebSocket
-        socketio.emit('dialog_deleted', {
-            'dialog_id': dialog_id
-        }, room=f'dialog_{dialog_id}')
+        socketio.emit('dialog_deleted', {}, room=f'dialog_{dialog_id}')
 
         return jsonify({"message": "Dialog deleted successfully"}), 200
     except Exception as e:
@@ -575,7 +572,6 @@ def delete_messages_task(message_ids, dialog_id):
             logger.info(f"Sending WebSocket message to room dialog_{dialog_id} with deleted message ids: {message_ids}")
             # Уведомление через WebSocket
             socketio.emit('messages_deleted', {
-                'dialog_id': dialog_id,
                 'deleted_message_ids': message_ids
             }, room=f'dialog_{dialog_id}')
 
@@ -640,7 +636,6 @@ def mark_messages_as_read(id_dialog):
 
         # Уведомляем участников через WebSocket
         socketio.emit('messages_read', {
-            'dialog_id': id_dialog,
             'messages_read_ids': ids_final
         }, room=f'dialog_{id_dialog}')
 
@@ -738,18 +733,19 @@ def get_conversations():
 
         group_list = []
         for group in groups:
-            last_message = GroupMessage.query.filter_by(group_id=group.id).order_by(
-                GroupMessage.timestamp.desc()).first()
+            query = text(f"SELECT text, timestamp, is_read FROM messages_group_{group.id} ORDER BY timestamp DESC LIMIT 1")
+            last_message = db.session.execute(query).mappings().first()
             group_data = {
                 "type": "group",
                 "id": group.id,
+                "key": group.key,
                 "name": group.name,
                 "created_by": group.created_by,
                 "avatar": group.avatar,
                 "last_message": {
-                    "text": last_message.text if last_message else None,
-                    "timestamp": last_message.timestamp if last_message else None,
-                    "is_read": last_message.is_read if last_message else None
+                    "text": last_message['text'] if last_message else None,
+                    "timestamp": last_message['timestamp'] if last_message else None,
+                    "is_read": last_message['is_read'] if last_message else None
                 },
                 "count_msg": group.count_msg,
                 "can_delete": group.can_delete,
@@ -760,7 +756,6 @@ def get_conversations():
         # Объединение и сортировка диалогов и групп по времени последнего сообщения
         conversations = dialog_list + group_list
         sorted_conversations = sorted(conversations, key=lambda x: x['last_message']['timestamp'].astimezone(timezone(timedelta(hours=3))) if x['last_message']['timestamp'] else 0, reverse=True)
-
 
         return jsonify(sorted_conversations), 200
     except Exception as e:
@@ -862,9 +857,7 @@ def delete_dialog_messages(dialog_id):
         db.session.commit()
 
         # Уведомление участников через WebSocket
-        socketio.emit('dialog_messages_all_deleted', {
-            'dialog_id': dialog_id
-        }, room=f'dialog_{dialog_id}')
+        socketio.emit('messages_all_deleted', {}, room=f'dialog_{dialog_id}')
 
         return jsonify({"message": "All messages in the dialog deleted successfully"}), 200
     except Exception as e:
@@ -918,7 +911,7 @@ def handle_typing_event(data):
         dialog_id = data.get('dialog_id')
 
         if dialog_id:
-            emit('typing', {'dialog_id': dialog_id, 'user_id': user_id}, room=f'dialog_{dialog_id}', skip_sid=request.sid)
+            emit('typing', {'user_id': user_id}, room=f'dialog_{dialog_id}', skip_sid=request.sid)
     except Exception as e:
         logger.info(f"Invalid token: {e}")
         disconnect()
@@ -946,7 +939,7 @@ def handle_stop_typing_event(data):
         dialog_id = data.get('dialog_id')
 
         if dialog_id:
-            emit('stop_typing', {'dialog_id': dialog_id, 'user_id': user_id}, room=f'dialog_{dialog_id}', skip_sid=request.sid)
+            emit('stop_typing', {'user_id': user_id}, room=f'dialog_{dialog_id}', skip_sid=request.sid)
     except Exception as e:
         logger.info(f"Invalid token: {e}")
         disconnect()

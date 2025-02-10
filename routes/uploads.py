@@ -13,6 +13,8 @@ ALLOWED_PHOTO_EXTENSIONS = {'jpg', 'jpeg', 'png', 'gif', 'mp4', 'avi', 'mpeg', '
 ALLOWED_AUDIO_EXTENSIONS = {'mp3', 'wav', 'ogg', 'pcm'}
 ALLOWED_FILE_EXTENSIONS = {'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx'}
 ALLOWED_VIDEO_EXTENSIONS = {'mp4', 'avi', 'mov', 'mkv', 'mpeg'}
+all_extensions = ALLOWED_PHOTO_EXTENSIONS | ALLOWED_FILE_EXTENSIONS | ALLOWED_AUDIO_EXTENSIONS
+
 
 
 def allowed_file(filename, allowed_extensions):
@@ -35,11 +37,13 @@ def generate_unique_filename(directory, filename):
     return unique_filename
 
 
-def create_partitioned_path(dialog_id, folder, subfolder_type='original'):
+def create_partitioned_path(dialog_id, folder, subfolder_type='original', is_group=False):
     """
     Создает путь с партицированием: тип_файла/dialog_id/имя_файла
     """
     base_folder = current_app.config['UPLOAD_FOLDER_BASE']
+    addition = current_app.config['UPLOAD_FOLDER_DIALOGS'] if not is_group else current_app.config['UPLOAD_FOLDER_GROUPS']
+    base_folder = os.path.join(base_folder, addition)
     subfolder = {
         'PHOTOS': current_app.config['UPLOAD_FOLDER_PHOTOS'],
         'AUDIO': current_app.config['UPLOAD_FOLDER_AUDIO'],
@@ -57,12 +61,13 @@ def create_partitioned_path(dialog_id, folder, subfolder_type='original'):
     return partitioned_path
 
 
-def save_file(file, dialog_id, folder, allowed_extensions):
+def save_file(file, dialog_id, folder, allowed_extensions, is_group=0):
     if file and allowed_file(file.filename, allowed_extensions):
         # Создаем путь с учетом партицирования
         is_image_or_video = folder.upper() in ['PHOTOS']
         subfolder_type = 'original' if is_image_or_video else ''
-        partitioned_path = create_partitioned_path(dialog_id, folder, subfolder_type)
+        f = is_group == 1
+        partitioned_path = create_partitioned_path(dialog_id, folder, subfolder_type, f)
         
         # Проверяем и создаем уникальное имя файла
         unique_filename = generate_unique_filename(partitioned_path, file.filename)
@@ -77,11 +82,12 @@ def save_file(file, dialog_id, folder, allowed_extensions):
     return None
 
 
-def save_file_with_preview(file, dialog_id, folder, allowed_extensions, is_video):
+def save_file_with_preview(file, dialog_id, folder, allowed_extensions, is_video, is_group=0):
     if file and allowed_file(file.filename, allowed_extensions):
-        partitioned_original_path = create_partitioned_path(dialog_id, folder, 'original')
+        f = is_group == 1
+        partitioned_original_path = create_partitioned_path(dialog_id, folder, 'original', f)
         unique_filename = generate_unique_filename(partitioned_original_path, file.filename)
-        partitioned_preview_path = create_partitioned_path(dialog_id, folder, 'preview')
+        partitioned_preview_path = create_partitioned_path(dialog_id, folder, 'preview', f)
 
         # Путь для оригинального файла
         original_file_path = os.path.join(partitioned_original_path, unique_filename)
@@ -168,9 +174,24 @@ def save_avatar(file, allowed_extensions):
     return None
 
 
-@uploads_bp.route('/upload/photo/<int:dialog_id>', methods=['POST'])
+def save_news_file(file):
+    # Так как новостей будет немного, не напрягаем сервер и скидываем файлы всех видов в общую директорию
+    if file and allowed_file(file.filename, all_extensions):
+        news_folder = os.path.join(current_app.config['UPLOAD_FOLDER_BASE'], 'news')
+        os.makedirs(news_folder, exist_ok=True)
+
+        unique_filename = generate_unique_filename(news_folder, file.filename)
+        file_path = os.path.join(news_folder, unique_filename)
+        file.save(file_path)
+
+        return unique_filename
+    
+    return None
+
+
+@uploads_bp.route('/upload/photo/<int:dialog_id>/<int:is_group>', methods=['POST'])
 @jwt_required()
-def upload_photo(dialog_id):
+def upload_photo(dialog_id, is_group=0):
     file = request.files.get('file')
 
     if not file or not dialog_id:
@@ -180,7 +201,7 @@ def upload_photo(dialog_id):
     file_extension = file.filename.rsplit('.', 1)[-1].lower()
     is_video = file_extension in ALLOWED_VIDEO_EXTENSIONS
     
-    filename = save_file_with_preview(file, dialog_id, 'PHOTOS', ALLOWED_PHOTO_EXTENSIONS, is_video)
+    filename = save_file_with_preview(file, dialog_id, 'PHOTOS', ALLOWED_PHOTO_EXTENSIONS, is_video, is_group)
     
     if not filename:
         return jsonify({'error': 'Invalid file type'}), 400
@@ -188,30 +209,30 @@ def upload_photo(dialog_id):
     return jsonify({'filename': filename}), 201
 
 
-@uploads_bp.route('/upload/audio/<int:dialog_id>', methods=['POST'])
+@uploads_bp.route('/upload/audio/<int:dialog_id>/<int:is_group>', methods=['POST'])
 @jwt_required()
-def upload_audio(dialog_id):
+def upload_audio(dialog_id, is_group=0):
     file = request.files.get('file')
 
     if not file or not dialog_id:
         return jsonify({'error': 'No file or dialog_id provided'}), 400
 
-    filename = save_file(file, dialog_id, 'AUDIO', ALLOWED_AUDIO_EXTENSIONS)
+    filename = save_file(file, dialog_id, 'AUDIO', ALLOWED_AUDIO_EXTENSIONS, is_group)
     if not filename:
         return jsonify({'error': 'Invalid file type'}), 400
 
     return jsonify({'filename': filename}), 201
 
 
-@uploads_bp.route('/upload/file/<int:dialog_id>', methods=['POST'])
+@uploads_bp.route('/upload/file/<int:dialog_id>/<int:is_group>', methods=['POST'])
 @jwt_required()
-def upload_file(dialog_id):
+def upload_file(dialog_id, is_group=0):
     file = request.files.get('file')
 
     if not file or not dialog_id:
         return jsonify({'error': 'No file or dialog_id provided'}), 400
 
-    filename = save_file(file, dialog_id, 'FILES', ALLOWED_FILE_EXTENSIONS)
+    filename = save_file(file, dialog_id, 'FILES', ALLOWED_FILE_EXTENSIONS, is_group)
     if not filename:
         return jsonify({'error': 'Invalid file type'}), 400
     logger.info(f"Uploaded new file: {file} in dialog: {dialog_id}")
@@ -234,9 +255,24 @@ def upload_avatar():
     return jsonify({'filename': filename}), 201
 
 
-@uploads_bp.route('/files/<folder>/<dialog_id>/<filename>', methods=['GET'])
+@uploads_bp.route('/upload/news', methods=['POST'])
 @jwt_required()
-def get_file(folder, dialog_id, filename):
+def upload_news():
+    file = request.files.get('file')
+
+    if not file:
+        return jsonify({'error': 'No file provided'}), 400
+    
+    filename = save_news_file(file)
+    if not filename:
+        return jsonify({'error': 'Invalid file type'}), 400
+
+    return jsonify({'filename': filename}), 201
+
+
+@uploads_bp.route('/files/<folder>/<int:dialog_id>/<filename>/<int:is_group>', methods=['GET'])
+@jwt_required()
+def get_file(folder, dialog_id, filename, is_group=0):
     folder_mapping = {
         'photos': current_app.config['UPLOAD_FOLDER_PHOTOS'],
         'audio': current_app.config['UPLOAD_FOLDER_AUDIO'],
@@ -244,13 +280,16 @@ def get_file(folder, dialog_id, filename):
     }
     if folder not in folder_mapping:
         return jsonify({'error': 'Invalid folder'}), 400
+    
+    addition = current_app.config['UPLOAD_FOLDER_DIALOGS'] if is_group == 0 else current_app.config['UPLOAD_FOLDER_GROUPS']
 
     # Проверяем, если это фото, добавляем /original к пути
     if folder == 'photos':
         file_path = os.path.join(
             current_app.config['UPLOAD_FOLDER_BASE'], 
+            addition, 
             folder_mapping[folder], 
-            dialog_id, 
+            str(dialog_id), 
             'original',  # Добавляем 'original' только для фотографий
             filename
         )
@@ -258,8 +297,9 @@ def get_file(folder, dialog_id, filename):
         # Для файлов и аудио оставляем без изменений
         file_path = os.path.join(
             current_app.config['UPLOAD_FOLDER_BASE'], 
+            addition, 
             folder_mapping[folder], 
-            dialog_id, 
+            str(dialog_id), 
             filename
         )
 
@@ -269,12 +309,12 @@ def get_file(folder, dialog_id, filename):
     return send_from_directory(os.path.dirname(file_path), filename)
 
 
-
-@uploads_bp.route('/media/preview/<int:dialog_id>/<filename>', methods=['GET'])
+@uploads_bp.route('/media/preview/<int:dialog_id>/<filename>/<int:is_group>', methods=['GET'])
 @jwt_required()
-def get_media_preview(dialog_id, filename):
+def get_media_preview(dialog_id, filename, is_group=0):
     # Построение партицированного пути для превью
-    partitioned_folder = create_partitioned_path(dialog_id, 'PHOTOS', 'preview')
+    f = is_group == 1
+    partitioned_folder = create_partitioned_path(dialog_id, 'PHOTOS', 'preview', f)
     file_path = os.path.join(partitioned_folder, filename)
 
     # Проверка существования файла
@@ -297,16 +337,18 @@ def get_avatar(filename):
 
     return send_from_directory(avatars_folder, filename)
 
-
-@uploads_bp.route('/files/<folder>/<dialog_id>/<filename>', methods=['DELETE'])
+    
+@uploads_bp.route('/news/<filename>', methods=['GET'])
 @jwt_required()
-def delete_file(folder, dialog_id, filename):
-    result, msg = delete_file_from_disk(folder, dialog_id, filename)
-    logger.info(f"deleted file: {filename} in dialog: {dialog_id}")
-    if result:
-        return jsonify({'message': 'File deleted successfully'}), 200
-    else:
-        return jsonify({'error': msg}), 400
+def get_news(filename):
+    news_folder = os.path.join(current_app.config['UPLOAD_FOLDER_BASE'], 'news')
+    
+    file_path = os.path.join(news_folder, filename)
+    
+    if not os.path.exists(file_path):
+        return jsonify({'error': 'File not found'}), 404
+
+    return send_from_directory(news_folder, filename)
 
 
 def get_preview_path(base_folder_path, filename):
@@ -326,7 +368,7 @@ def get_preview_path(base_folder_path, filename):
     return None
 
 
-def delete_file_from_disk(folder, dialog_id, filename):
+def delete_file_from_disk(folder, dialog_id, filename, is_group=False):
     folder_mapping = {
         'photos': current_app.config['UPLOAD_FOLDER_PHOTOS'],
         'audio': current_app.config['UPLOAD_FOLDER_AUDIO'],
@@ -336,8 +378,9 @@ def delete_file_from_disk(folder, dialog_id, filename):
     if folder not in folder_mapping:
         return False, 'Invalid folder'
 
+    addition = current_app.config['UPLOAD_FOLDER_DIALOGS'] if not is_group else current_app.config['UPLOAD_FOLDER_GROUPS']
     # Базовый путь с партицированием
-    base_folder_path = os.path.join(current_app.config['UPLOAD_FOLDER_BASE'], folder_mapping[folder], dialog_id)
+    base_folder_path = os.path.join(current_app.config['UPLOAD_FOLDER_BASE'], addition, folder_mapping[folder], str(dialog_id))
 
     # Фото и видео
     if folder == 'photos':
@@ -387,8 +430,24 @@ def delete_avatar_file_if_exists(filename):
             logger.info(f'Error deleting avatar {filename}: {str(e)}')
 
 
-def get_dialog_medias(dialog_id, page=0, page_size=12):
-    preview_folder = create_partitioned_path(dialog_id, 'PHOTOS', 'preview')
+def delete_news_file_if_exists(filename):
+    if not filename:
+        return
+    
+    news_folder = os.path.join(current_app.config['UPLOAD_FOLDER_BASE'], 'news')
+    file_path = os.path.join(news_folder, filename)
+
+    if os.path.exists(file_path):
+        try:
+            os.remove(file_path)
+            logger.info(f'News {filename} deleted successfully')
+        except Exception as e:
+            logger.info(f'Error deleting news {filename}: {str(e)}')
+
+
+def get_dialog_medias(dialog_id, is_group=0, page=0, page_size=12):
+    f = is_group == 1
+    preview_folder = create_partitioned_path(dialog_id, 'PHOTOS', 'preview', f)
     all_files = []
     
     # Собираем все файлы с разрешенными расширениями
@@ -405,8 +464,9 @@ def get_dialog_medias(dialog_id, page=0, page_size=12):
 
 
 
-def get_dialog_files(dialog_id, page=0, page_size=10):
-    files_folder = create_partitioned_path(dialog_id, 'FILES', '')
+def get_dialog_files(dialog_id, is_group=0, page=0, page_size=10):
+    f = is_group == 1
+    files_folder = create_partitioned_path(dialog_id, 'FILES', '', f)
     all_files = []
     
     # Собираем все файлы с разрешенными расширениями
@@ -422,8 +482,9 @@ def get_dialog_files(dialog_id, page=0, page_size=10):
     return jsonify({'filename': paginated_files})
 
 
-def get_dialog_audios(dialog_id, page=0, page_size=20):
-    audio_folder = create_partitioned_path(dialog_id, 'AUDIO', '')
+def get_dialog_audios(dialog_id, is_group=0, page=0, page_size=20):
+    f = is_group == 1
+    audio_folder = create_partitioned_path(dialog_id, 'AUDIO', '', f)
     all_files = []
     
     # Собираем все аудиофайлы с разрешенными расширениями
@@ -439,19 +500,19 @@ def get_dialog_audios(dialog_id, page=0, page_size=20):
     return jsonify({'filename': paginated_files})
 
 
-@uploads_bp.route('/files/<int:dialog_id>/media/<int:page>', methods=['GET'])
+@uploads_bp.route('/files/<int:is_group>/<int:dialog_id>/media/<int:page>', methods=['GET'])
 @jwt_required()
-def fetch_media(dialog_id, page=0):
-    return get_dialog_medias(dialog_id, page)
+def fetch_media(dialog_id, is_group=0, page=0):
+    return get_dialog_medias(dialog_id, is_group, page)
 
 
-@uploads_bp.route('/files/<int:dialog_id>/file/<int:page>', methods=['GET'])
+@uploads_bp.route('/files/<int:is_group>/<int:dialog_id>/file/<int:page>', methods=['GET'])
 @jwt_required()
-def fetch_file(dialog_id, page=0):
-    return get_dialog_files(dialog_id, page)
+def fetch_file(dialog_id, is_group=0, page=0):
+    return get_dialog_files(dialog_id, is_group, page)
 
 
-@uploads_bp.route('/files/<int:dialog_id>/audio/<int:page>', methods=['GET'])
+@uploads_bp.route('/files/<int:is_group>/<int:dialog_id>/audio/<int:page>', methods=['GET'])
 @jwt_required()
-def fetch_audio(dialog_id, page=0):
-    return get_dialog_audios(dialog_id, page)
+def fetch_audio(dialog_id, is_group=0, page=0):
+    return get_dialog_audios(dialog_id, is_group, page)

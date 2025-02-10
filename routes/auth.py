@@ -52,7 +52,7 @@ def update_profile():
 
         data = request.get_json()
         user.username = data.get('username', user.username)
-        avatar = data.get('avatar', user.avatar)
+        avatar = data.get('avatar')
         if avatar == "delete":
             if user.avatar:
                 delete_avatar_file_if_exists(user.avatar)
@@ -101,9 +101,9 @@ def update_password():
         return jsonify({"error": str(e)}), 500
 
 
-@auth_bp.route('/update_last_session/<int:id_dialog>', methods=['PUT'])
+@auth_bp.route('/update_last_session', methods=['PUT'])
 @jwt_required()
-def update_last_session(id_dialog):
+def update_last_session():
     user_id = get_jwt_identity()
     try:
         user = User.query.get(user_id)
@@ -116,8 +116,8 @@ def update_last_session(id_dialog):
         # Уведомление через WebSocket
         socketio.emit('user_session_updated', {
             'user_id': user_id,
-            'last_session': int(user.last_session.timestamp() * 1000 + 10800000)
-        }, room=f'dialog_{id_dialog}')
+            'last_session': int(user.last_session.timestamp() * 1000)
+        }, room=None) # Отправка сообщения глобально
 
         return jsonify({"message": "Last session time updated successfully"}), 200
     except Exception as e:
@@ -133,7 +133,9 @@ def get_last_session(user_id):
         if not user:
             return jsonify({"error": "User not found"}), 404
 
-        return jsonify({"last_session": user.last_session}), 200
+        last_session = int(user.last_session.timestamp() * 1000)
+
+        return jsonify({"last_session": last_session}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -205,11 +207,8 @@ def set_vacation():
         db.session.commit()
         return jsonify({'message': 'Operation completed successfully'}), 200
 
-    except SQLAlchemyError as e:
-        db.session.rollback()
-        logger.error(f"Ошибка базы данных: {e}")
-        return jsonify({'error': 'Database error'}), 500
     except Exception as e:
+        db.session.rollback()
         logger.error(f"Необработанная ошибка: {e}")
         return jsonify({'error': str(e)}), 500
 

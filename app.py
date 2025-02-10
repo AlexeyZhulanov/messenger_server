@@ -1,4 +1,5 @@
 from flask import Flask
+from flask_migrate import Migrate
 from flask_jwt_extended import JWTManager
 from config import Config
 from models import db
@@ -18,13 +19,15 @@ logger = logging.getLogger(__name__)
 socketio = SocketIO(app, cors_allowed_origins="*", message_queue='redis://localhost:6379')  # Поддержка CORS для клиента
 redis_broker = RedisBroker(host="localhost", port=6379)
 dramatiq.set_broker(redis_broker)
+jwt = JWTManager(app)
+#migrate = Migrate()
 
 
 def create_app():
     app.config.from_object(Config)
 
     db.init_app(app)
-    jwt = JWTManager(app)
+    #migrate.init_app(app, db)
 
     with app.app_context():
         for folder in [app.config['UPLOAD_FOLDER_PHOTOS'], app.config['UPLOAD_FOLDER_AUDIO'], app.config['UPLOAD_FOLDER_FILES']]:
@@ -39,12 +42,14 @@ def create_app():
     from routes.groups import groups_bp
     from routes.uploads import uploads_bp
     from routes.logs import logs_bp
+    from routes.news import news_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(messages_bp)
     app.register_blueprint(groups_bp)
     app.register_blueprint(uploads_bp)
     app.register_blueprint(logs_bp)
+    app.register_blueprint(news_bp)
 
     return app
 
