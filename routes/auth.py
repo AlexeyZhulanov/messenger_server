@@ -1,10 +1,13 @@
 from flask import Blueprint, request, jsonify
-from flask_jwt_extended import create_access_token, jwt_required, get_jwt_identity
+from flask_jwt_extended import create_access_token, create_refresh_token, jwt_required, get_jwt_identity, decode_token
+from flask_socketio import emit, join_room, disconnect
 from werkzeug.security import generate_password_hash, check_password_hash
-from models import db, User, Log
+from models import db, User, Log, NewsKeys
 from .uploads import delete_avatar_file_if_exists
-from datetime import datetime, timezone
+from .keys import encrypt_symmetric_key_for_user
+from datetime import datetime, timezone, timedelta
 from app import socketio, logger
+from jwt.exceptions import ExpiredSignatureError
 
 auth_bp = Blueprint('auth', __name__)
 
@@ -34,11 +37,21 @@ def login():
         data = request.get_json()
         user = User.query.filter_by(name=data['name']).first()
         if user and check_password_hash(user.password, data['password']):
-            access_token = create_access_token(identity=user.id)
-            return jsonify(access_token=access_token)
+            access_token = create_access_token(identity=user.id, expires_delta=timedelta(minutes=15))
+            refresh_token = create_refresh_token(identity=user.id, expires_delta=timedelta(days=30))
+            return jsonify(access_token=access_token, refresh_token=refresh_token)
         return jsonify({'error': 'Invalid credentials'}), 401
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+@auth_bp.route('/refresh', methods=['POST'])
+@jwt_required(refresh=True)  # Требует Refresh Token
+def refresh():
+    user_id = get_jwt_identity()
+    user = User.query.get(user_id)
+    new_access_token = create_access_token(identity=user.id, expires_delta=timedelta(minutes=15))
+    return jsonify(access_token=new_access_token)
 
 
 @auth_bp.route('/update_profile', methods=['PUT'])
@@ -81,7 +94,15 @@ def update_password():
             return jsonify({"error": "User not found"}), 404
 
         data = request.get_json()
-        new_password = data.get('password')
+        old_password = data.get('old_password')
+        new_password = data.get('new_password')
+
+        if not check_password_hash(user.password, old_password):
+            log = Log(id_user=user_id, action="update_password", content="Failed to change password(Incorrect password)", is_successful=False)
+            db.session.add(log)
+            db.session.commit()
+            return jsonify({"error": "Incorrect password"}), 400
+
         if not new_password:
             log = Log(id_user=user_id, action="update_password", content="Failed to change password(No new password provided)", is_successful=False)
             db.session.add(log)
@@ -158,13 +179,74 @@ def get_user(user_id):
             "id": user.id,
             "name": user.name,
             "username": user.username,
-            "avatar": user.avatar
+            "avatar": user.avatar,
+            "public_key": user.public_key
         }
 
         return jsonify(user_data), 200
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+    
+
+@auth_bp.route('/user/<name>/key', methods=['GET'])
+@jwt_required()
+def get_user_key(name):
+    try:
+        user = User.query.filter_by(name=name).first()
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+        
+        return jsonify({'public_key': user.public_key}), 200
+    except Exception as e:
+        logger.error(f"Необработанная ошибка: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@auth_bp.route('/user/keys', methods=['GET'])
+@jwt_required()
+def get_keys():
+    try:
+        user_id = get_jwt_identity()
+        user = User.query.get(user_id)
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+        
+        return jsonify({'public_key': user.public_key, 'private_key': user.encrypted_private_key}), 200
+    except Exception as e:
+        logger.error(f"Необработанная ошибка: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@auth_bp.route('/user/key', methods=['POST'])
+@jwt_required()
+def save_user_keys():
+    try:
+        user_id = get_jwt_identity()
+        user = User.query.get(user_id)
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+        
+        data = request.get_json()
+        public_key = data.get('public_key')
+        private_key = data.get('private_key')
+        if not public_key or not private_key:
+            return jsonify({'error': 'Invalid key pair'}), 400
+        user.public_key = public_key
+        user.encrypted_private_key = private_key
+        db.session.commit()
+
+        encrypted_symm_key = encrypt_symmetric_key_for_user(public_key)
+        news_keys = NewsKeys(user_id=user_id, key=encrypted_symm_key)
+        db.session.add(news_keys)
+        db.session.commit()
+        
+        return jsonify({'message': 'Public key updated successfully'}), 200
+    
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Ошибка с обновлением ключа: {e}")
+        return jsonify({'error': str(e)}), 500
 
 
 @auth_bp.route('/set_vacation', methods=['POST'])
@@ -317,3 +399,74 @@ def get_permission():
         return jsonify({'permission': user.permission}), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+@auth_bp.route('/save_fcm_token', methods=['POST'])
+@jwt_required()
+def save_fcm_token():
+    try:
+        user_id = get_jwt_identity()
+        user = User.query.get(user_id)
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+        
+        data = request.get_json()
+        token = data.get('token')
+        if not token:
+            return jsonify({'error': 'Invalid input'}), 400
+        user.fcm_token = token
+        db.session.commit()
+        return jsonify({'message': 'FCM token updated successfully'}), 200
+    
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Ошибка с обновлением FCM токена: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@auth_bp.route('/fcm_token', methods=['DELETE'])
+@jwt_required()
+def delete_fcm_token():
+    try:
+        user_id = get_jwt_identity()
+        user = User.query.get(user_id)
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+
+        user.fcm_token = None
+        db.session.commit()
+        
+        return jsonify({'message': 'FCM token deleted successfully'}), 200
+
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Ошибка при удалении FCM токена: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@socketio.on('connect')
+def handle_connect():
+    """ Подключение пользователя к WebSocket для уведомлений """
+    token = request.headers.get('Authorization')
+    if token and token.startswith("Bearer "):
+        token = token.split("Bearer ")[1]
+    else:
+        logger.info("Missing or invalid Authorization header")
+        disconnect()
+        return
+
+    try:
+        decoded_token = decode_token(token)
+        user_id = decoded_token['sub']  # Получаем user_id
+
+        # Присоединяем пользователя к его персональной комнате
+        join_room(f'user_{user_id}')
+        logger.info(f"User {user_id} connected to personal notifications room")
+        
+    except ExpiredSignatureError:
+        logger.info("Token expired caught")
+        emit('token_expired', {'message': 'Token has expired'})
+        disconnect()
+    except Exception as e:
+        logger.info(f"Invalid token: {e}")
+        disconnect()

@@ -4,12 +4,14 @@ from flask_socketio import emit, join_room, leave_room, disconnect
 from models import db, Group, GroupMember, User, Log, increment_message_count, decrement_message_count, create_message_table
 from .uploads import delete_file_from_disk, delete_avatar_file_if_exists
 from app import socketio, logger, dramatiq, app
+from fcm import send_push_wakeup
 from jwt.exceptions import ExpiredSignatureError
 from sqlalchemy import text
-from datetime import timezone, timedelta
 
 
 groups_bp = Blueprint('groups', __name__)
+
+active_groups = {}  # словарь: { user_id: group_id }
 
 
 @groups_bp.route('/groups', methods=['POST'])
@@ -18,29 +20,31 @@ def create_group():
     try:
         user_id = get_jwt_identity()
         data = request.get_json()
+        name = data.get('name')
+        owner_key = data.get('key')
+
+        if not owner_key:
+            log = Log(id_user=user_id, action="create_group", content=f"Failed: User sent empty key", is_successful=False)
+            db.session.add(log)
+            db.session.commit()
+            return jsonify({'error': 'Invalid key'}), 400
 
         # Создание новой группы
-        new_group = Group(name=data['name'], created_by=user_id)
+        new_group = Group(name=name, created_by=user_id)
         db.session.add(new_group)
         db.session.flush()  # Используем flush для получения ID новой группы
 
         # Добавление создателя группы как её члена
-        new_member = GroupMember(group_id=new_group.id, user_id=user_id)
+        new_member = GroupMember(group_id=new_group.id, user_id=user_id, key=owner_key)
         db.session.add(new_member)
 
         create_message_table(new_group.id, is_group=True)
 
-        # Отправка сообщения о создании группы
-        user = User.query.get(user_id)
-        insert_message_query = f'INSERT INTO messages_group_{new_group.id} (id_sender, text) VALUES (:id_sender, :text)'
-        db.session.execute(text(insert_message_query), {'id_sender': user_id, 'text': f'{user.username} has created a group'})
-        db.session.commit()
-        increment_message_count(group_id=new_group.id)
         log = Log(id_user=user_id, action="create_group", content=f"Group created")
         db.session.add(log)
         db.session.commit()
 
-        return jsonify({'message': 'Group created and user added successfully'}), 201
+        return jsonify({"id_group": new_group.id}), 200
     except Exception as e:
         db.session.rollback()  # Откат транзакции в случае ошибки
         log = Log(id_user=user_id, action="create_group", content=str(e)[:200], is_successful=False)
@@ -100,7 +104,6 @@ def send_group_message(group_id):
 
         message_id, timestamp = result.fetchone()
 
-        # Отправляем уведомление через WebSocket
         socketio.emit('new_message', {
             'id': message_id,
             'id_sender': user_id,
@@ -115,6 +118,36 @@ def send_group_message(group_id):
             'reference_to_message_id': reference_to_message_id,
             'timestamp': int(timestamp.timestamp() * 1000)
         }, room=f'group_{group_id}')
+
+        user = User.query.get(user_id)
+        group_members = GroupMember.query.filter_by(group_id=group_id).all()
+        member_ids = [member.user_id for member in group_members]
+        member_ids.remove(user_id)
+
+        notification_data = {
+            'chat_id': group_id,
+            'message_id': message_id,
+            'text': text_content,
+            'images': images,
+            'voice': voice,
+            'file': file,
+            'id_sender': user_id,
+            'sender_name': user.username,
+            'avatar': group.avatar,
+            'is_group': True,
+            'group_name': group.name
+        }
+
+        # Для push-уведомлений
+        for id in member_ids:
+            if active_groups.get(id) != group_id:
+                socketio.emit('new_message_notification', notification_data, room=f'user_{id}')
+                # FCM-уведомление, если пользователь оффлайн
+                room_name = f"user_{id}"
+                is_online = room_name in socketio.server.manager.rooms.get("/", {})
+                if not is_online:
+                    other_user = User.query.get(id)
+                    send_push_wakeup(other_user.fcm_token)
 
         return jsonify({"message": "Message sent successfully"}), 201
     except Exception as e:
@@ -149,8 +182,9 @@ def get_group_messages(group_id):
         table_name = f'messages_group_{group_id}'
 
         # Получение сообщений с пагинацией
-        get_messages_query = text(f'SELECT * FROM {table_name} ORDER BY timestamp ASC LIMIT :limit OFFSET :offset;')
+        get_messages_query = text(f'SELECT * FROM {table_name} ORDER BY timestamp DESC LIMIT :limit OFFSET :offset;')
         messages = db.session.execute(get_messages_query, {'limit': size, 'offset': offset}).mappings().all()
+        messages.reverse()
 
         if not messages:
             return jsonify([]), 200
@@ -229,49 +263,6 @@ def get_message_by_id(message_id):
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500
-
-
-@groups_bp.route('/group/<int:group_id>/key', methods=['PUT'])
-@jwt_required()
-def add_key_to_group(group_id):
-    try:
-        user_id = get_jwt_identity()
-        group = Group.query.get(group_id)
-        if not group:
-            return jsonify({"error": "Group not found"}), 404
-
-        if not GroupMember.query.filter_by(group_id=group_id, user_id=user_id).first():
-            return jsonify({"error": "You are not a member of this group"}), 403
-        
-        data = request.get_json()
-        key = data.get('key')
-        if not key:
-            return jsonify({"error": "No key provided"}), 400
-
-        group.key = key
-        db.session.commit()
-        return jsonify({"message": "Key added to group"}), 200
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@groups_bp.route('/group/<int:group_id>/key', methods=['DELETE'])
-@jwt_required()
-def remove_key_from_group(group_id):
-    try:
-        user_id = get_jwt_identity()
-        group = Group.query.get(group_id)
-        if not group:
-            return jsonify({"error": "Group not found"}), 404
-
-        if not GroupMember.query.filter_by(group_id=group_id, user_id=user_id).first():
-            return jsonify({"error": "You are not a member of this group"}), 403
-
-        group.key = None
-        db.session.commit()
-        return jsonify({"message": "Key removed from group"}), 200
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
 
 
 @groups_bp.route('/group_messages/<int:message_id>', methods=['PUT'])
@@ -509,16 +500,23 @@ def add_user_to_group(group_id):
     try:
         user_id = get_jwt_identity()
         data = request.get_json()
-        new_member_name = data['name']
+        new_member_name = data.get('name')
+        group_key = data.get('key')
         if not GroupMember.query.filter_by(group_id=group_id, user_id=user_id).first():
-            return jsonify({"error": "You are not a member of this group"}), 403
+            return jsonify({'error': "You are not a member of this group"}), 403
 
         user = User.query.filter_by(name=new_member_name).first()
+        if not user:
+            return jsonify({"error": "User not found"}), 404
+        
         # Проверка, что пользователя еще нет в группе
         if GroupMember.query.filter_by(group_id=group_id, user_id=user.id).first():
-            return jsonify({'error': 'User is already a member of the group'}), 400
+            return jsonify({'error': 'User is already a member of the group'}), 409
 
-        new_member = GroupMember(group_id=group_id, user_id=user.id)
+        if not group_key:
+            return jsonify({'error': 'Invalid key'}), 400
+
+        new_member = GroupMember(group_id=group_id, user_id=user.id, key=group_key)
         db.session.add(new_member)
         db.session.commit()
         return jsonify({'message': 'User added to group successfully'}), 201
@@ -811,33 +809,10 @@ def delete_group_messages_all(group_id):
         return jsonify({"error": str(e)}), 500
 
 
-@groups_bp.route('/group/<int:group_id>/settings', methods=['GET'])
-@jwt_required()
-def get_group_settings(group_id):
-    user_id = get_jwt_identity()
-    try:
-        group = Group.query.get(group_id)
-        if not group:
-            return jsonify({"error": "Group not found"}), 404
-        if not GroupMember.query.filter_by(group_id=group_id, user_id=user_id).first():
-            return jsonify({"error": "You are not a member of this group"}), 403
-
-        return jsonify({
-            "can_delete": group.can_delete,
-            "auto_delete_interval": group.auto_delete_interval
-        }), 200
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
 @groups_bp.route('/groups/<int:group_id>/messages/search', methods=['GET'])
 @jwt_required()
 def search_messages_in_group(group_id):
     user_id = get_jwt_identity()
-    search_text = request.args.get('q', '')
-
-    if not search_text:
-        return jsonify({"error": "Search text must be provided"}), 400
 
     group = Group.query.get(group_id)
     if not group:
@@ -848,10 +823,9 @@ def search_messages_in_group(group_id):
 
     table_name = f'messages_group_{group_id}'
 
-    # Полнотекстовый поиск по партицированной таблице сообщений
-    search_text = ' & '.join([f'{word}:*' for word in search_text.split()])
-    search_query = text(f"SELECT * FROM {table_name} WHERE to_tsvector('simple', text) @@ to_tsquery('simple', :search_text)")
-    messages = db.session.execute(search_query, {'search_text': search_text}).mappings().all()
+    # Получаем все сообщения из таблицы, кроме тех, где text == None
+    query = text(f"SELECT * FROM {table_name} WHERE text IS NOT NULL")
+    messages = db.session.execute(query).mappings().all()
 
     message_list = [
         {
@@ -953,6 +927,7 @@ def handle_join_dialog(data):
         if group_id:
             # Присоединяем пользователя к комнате, соответствующей диалогу
             join_room(f'group_{group_id}')
+            active_groups[user_id] = group_id
             emit('user_joined', {'dialog_id': group_id, 'user_id': user_id}, room=f'group_{group_id}', skip_sid=request.sid)
             logger.info(f"Joined Group ID: {group_id}")
     except ExpiredSignatureError:
@@ -988,6 +963,8 @@ def handle_leave_dialog(data):
 
         if group_id:
             leave_room(f'group_{group_id}')
+            if active_groups.get(user_id) == group_id:
+                active_groups.pop(user_id)
             emit('user_left', {'dialog_id': group_id, 'user_id': user_id}, room=f'group_{group_id}', skip_sid=request.sid)
     except Exception as e:
         logger.info(f"Invalid token: {e}")

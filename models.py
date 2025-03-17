@@ -67,15 +67,6 @@ def create_message_table(conv_id, is_group=False):
         db.session.execute(create_table_query)
         db.session.commit()
 
-        # Создание GIN-индекса для полнотекстового поиска
-        create_index_query = text(f'''
-            CREATE INDEX idx_{table_name}_text_ft 
-            ON {table_name} 
-            USING gin(to_tsvector('simple', text));
-        ''')
-        db.session.execute(create_index_query)
-        db.session.commit()
-
 
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -87,6 +78,9 @@ class User(db.Model):
     vacation_start = db.Column(db.Date, nullable=True)
     vacation_end = db.Column(db.Date, nullable=True)
     permission = db.Column(db.Integer, nullable=False, server_default="0") # User - 0, Moderator - 1
+    fcm_token = db.Column(db.String(255), nullable=True)
+    public_key = db.Column(db.Text)
+    encrypted_private_key = db.Column(db.Text)
 
     dialogs_as_user1 = db.relationship('Dialog', foreign_keys='Dialog.id_user1', backref='user1', lazy=True)
     dialogs_as_user2 = db.relationship('Dialog', foreign_keys='Dialog.id_user2', backref='user2', lazy=True)
@@ -97,7 +91,8 @@ class Dialog(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     id_user1 = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     id_user2 = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
-    key = db.Column(db.String(256))
+    key_user1 = db.Column(db.Text, nullable=False)
+    key_user2 = db.Column(db.Text, nullable=False)
     count_msg = db.Column(db.Integer, default=0)
     can_delete = db.Column(db.Boolean, default=False)
     auto_delete_interval = db.Column(db.Integer, default=0)
@@ -110,7 +105,6 @@ class Group(db.Model):
     name = db.Column(db.String(50), nullable=False)
     created_by = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     avatar = db.Column(db.String(256))
-    key = db.Column(db.String(256))
     count_msg = db.Column(db.Integer, default=0)
     can_delete = db.Column(db.Boolean, default=False)
     auto_delete_interval = db.Column(db.Integer, default=0)
@@ -120,6 +114,7 @@ class GroupMember(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     group_id = db.Column(db.Integer, db.ForeignKey('group.id'), nullable=False)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    key = db.Column(db.Text, nullable=False)
 
 
 class News(db.Model):
@@ -133,6 +128,12 @@ class News(db.Model):
     is_edited = db.Column(db.Boolean, default=False)
     views_count = db.Column(db.Integer, default=0)
     timestamp = db.Column(db.DateTime, server_default=func.now())
+
+
+class NewsKeys(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    key = db.Column(db.Text)
 
 
 class Log(db.Model):

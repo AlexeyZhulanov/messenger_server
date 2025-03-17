@@ -1,7 +1,9 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
-from models import db, User, Log, News
+from models import db, User, Log, News, NewsKeys
 from .uploads import delete_news_file_if_exists
+from app import socketio
+from fcm import send_push_wakeups
 
 news_bp = Blueprint('news', __name__)
 
@@ -41,6 +43,22 @@ def send_news():
         log = Log(id_user=id_sender, action="send_news", content="News was sent successfully")
         db.session.add(log)
         db.session.commit()
+
+        # Для push-уведомлений
+        socketio.emit('news_notification', {
+            'header_text': header_text,
+            'text': text_content,
+            'images': images,
+            'voices': voices,
+            'files': files
+        }, room=None)
+
+        # FCM
+        offline_users = User.query.filter(User.fcm_token.isnot(None)).all()
+        offline_tokens = [user.fcm_token for user in offline_users if f"user_{user.id}" not in socketio.server.manager.rooms["/"]]
+        if offline_tokens:
+            send_push_wakeups(offline_tokens)
+
         return jsonify({"message": "News post sent successfully"}), 201
     
     except Exception as e:
@@ -214,4 +232,18 @@ def delete_news(news_id):
         log = Log(id_user=user_id, action="delete_news", content=str(e)[:200], is_successful=False)
         db.session.add(log)
         db.session.commit()
+        return jsonify({'error': str(e)}), 500
+
+
+@news_bp.route('/news/key', methods=['GET'])
+@jwt_required()
+def get_news_key():
+    try:
+        user_id = get_jwt_identity()
+        news_keys = NewsKeys.query.filter_by(user_id=user_id).first()
+        if not news_keys:
+            return jsonify({"error": "Key not found"}), 404
+        
+        return jsonify({'news_key': news_keys.key}), 200
+    except Exception as e:
         return jsonify({'error': str(e)}), 500

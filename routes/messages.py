@@ -5,12 +5,15 @@ from models import (db, Dialog, User, Group, GroupMember, Log, increment_message
                     decrement_message_count, create_message_table)
 from .uploads import delete_file_from_disk
 from app import socketio, logger, dramatiq, app
+from fcm import send_push_wakeup
 from jwt.exceptions import ExpiredSignatureError
 from sqlalchemy import text
-from datetime import timezone, timedelta
+from datetime import timezone, timedelta, datetime
 
 
 messages_bp = Blueprint('messages', __name__)
+
+active_dialogs = {}  # словарь: { user_id: dialog_id }
 
 
 @messages_bp.route('/dialogs', methods=['POST'])
@@ -19,13 +22,22 @@ def create_dialog():
     try:
         user_id = get_jwt_identity()
         data = request.get_json()
-        other_user = User.query.filter_by(name=data['name']).first()
+        name = data.get('name')
+        dialog_key1 = data.get('key_user1')
+        dialog_key2 = data.get('key_user2')
+        other_user = User.query.filter_by(name=name).first()
 
         if not other_user:
-            log = Log(id_user=user_id, action="create_dialog", content=f"Failed: User '{data['name']}' not found", is_successful=False)
+            log = Log(id_user=user_id, action="create_dialog", content=f"Failed: User '{name}' not found", is_successful=False)
             db.session.add(log)
             db.session.commit()
             return jsonify({'error': 'User not found'}), 404
+        
+        if not dialog_key1 or not dialog_key2:
+            log = Log(id_user=user_id, action="create_dialog", content=f"Failed: User sent empty key", is_successful=False)
+            db.session.add(log)
+            db.session.commit()
+            return jsonify({'error': 'Invalid key'}), 400
 
         # Проверка на существование диалога
         existing_dialog = Dialog.query.filter(
@@ -40,30 +52,17 @@ def create_dialog():
             return jsonify({'error': 'Dialog already exists'}), 409
 
         # Создание нового диалога
-        new_dialog = Dialog(id_user1=user_id, id_user2=other_user.id)
+        new_dialog = Dialog(id_user1=user_id, id_user2=other_user.id, key_user1=dialog_key1, key_user2 = dialog_key2)
         db.session.add(new_dialog)
-        db.session.commit()
+        db.session.flush() # Используем flush для получения ID диалога
 
         create_message_table(new_dialog.id)
 
-        # Отправка сообщения о создании диалога
-        user = User.query.get(user_id)
-        insert_message_query = f'INSERT INTO messages_dialog_{new_dialog.id} (id_sender, text) VALUES (:id_sender, :text)'
-        db.session.execute(text(insert_message_query), {'id_sender': user_id, 'text': f'{user.username} has created a dialog'})
-        db.session.commit()
-        increment_message_count(dialog_id=new_dialog.id)
         log = Log(id_user=user_id, action="create_dialog", content=f"Dialog created with {other_user.name}")
         db.session.add(log)
         db.session.commit()
 
-        # Уведомление участников через WebSocket
-        # Пока что это не используется, возможно нужно будет удалить
-        socketio.emit('dialog_created', {
-            'dialog_id': new_dialog.id,
-            'message': f"Dialog created between {user.username} and {other_user.username}"
-        }, room=f'dialog_{new_dialog.id}')
-
-        return jsonify({'message': 'Dialog created successfully'}), 201
+        return jsonify({"id_dialog": new_dialog.id}), 200
     except Exception as e:
         db.session.rollback()
         log = Log(id_user=user_id, action="create_dialog", content=str(e)[:200], is_successful=False)
@@ -100,9 +99,6 @@ def send_message(id_dialog):
             db.session.add(log)
             db.session.commit()
 
-        # Создание таблицы сообщений для диалога, если она не существует
-        # create_message_table(id_dialog)
-
         # Вставка сообщения в партицированную таблицу
         table_name = f'messages_dialog_{id_dialog}'
         insert_message_query = text(f'''INSERT INTO {table_name} 
@@ -128,7 +124,6 @@ def send_message(id_dialog):
 
         message_id, timestamp = result.fetchone()
 
-        # Отправляем уведомление через WebSocket
         socketio.emit('new_message', {
             'id': message_id,
             'id_sender': id_sender,
@@ -144,9 +139,37 @@ def send_message(id_dialog):
             'timestamp': int(timestamp.timestamp() * 1000)
         }, room=f'dialog_{id_dialog}')
 
+        user = User.query.get(id_sender)
+        other_user_id = dialog.id_user1 if dialog.id_user1 != id_sender else dialog.id_user2
+
+        # Для push-уведомлений
+        if active_dialogs.get(other_user_id) != id_dialog:
+            socketio.emit('new_message_notification', {
+                'chat_id': id_dialog,
+                'message_id': message_id,
+                'text': text_content,
+                'images': images,
+                'voice': voice,
+                'file': file,
+                'id_sender': id_sender,
+                'sender_name': user.username,
+                'avatar': user.avatar,
+                'is_group': False,
+                'group_name': None
+            }, room=f'user_{other_user_id}')
+
+            # FCM-уведомление, если пользователь оффлайн
+            room_name = f"user_{other_user_id}"
+            is_online = room_name in socketio.server.manager.rooms.get("/", {})
+
+            if not is_online:
+                other_user = User.query.get(other_user_id)
+                send_push_wakeup(other_user.fcm_token)
+
         return jsonify({"message": "Message sent successfully"}), 201
     except Exception as e:
         db.session.rollback()
+        logger.error(f"Необработанная ошибка: {e}")
         return jsonify({'error': str(e)}), 500
 
 
@@ -177,8 +200,9 @@ def get_messages(id_dialog):
         table_name = f'messages_dialog_{id_dialog}'
 
         # Получение сообщений с пагинацией
-        get_messages_query = text(f'SELECT * FROM {table_name} ORDER BY timestamp ASC LIMIT :limit OFFSET :offset;')
+        get_messages_query = text(f'SELECT * FROM {table_name} ORDER BY timestamp DESC LIMIT :limit OFFSET :offset;')
         messages = db.session.execute(get_messages_query, {'limit': size, 'offset': offset}).mappings().all()
+        messages.reverse()
 
         if not messages:
             return jsonify([]), 200
@@ -257,49 +281,6 @@ def get_message_by_id(message_id):
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500
-
-
-@messages_bp.route('/dialogs/<int:dialog_id>/key', methods=['PUT'])
-@jwt_required()
-def add_key_to_dialog(dialog_id):
-    try:
-        user_id = get_jwt_identity()
-        dialog = Dialog.query.get(dialog_id)
-        if not dialog:
-            return jsonify({"error": "Dialog not found"}), 404
-
-        if dialog.id_user1 != user_id and dialog.id_user2 != user_id:
-            return jsonify({"error": "You are not a participant in this dialog"}), 403
-
-        data = request.get_json()
-        key = data.get('key')
-        if not key:
-            return jsonify({"error": "No key provided"}), 400
-
-        dialog.key = key
-        db.session.commit()
-        return jsonify({"message": "Key added to dialog"}), 200
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@messages_bp.route('/dialogs/<int:dialog_id>/key', methods=['DELETE'])
-@jwt_required()
-def remove_key_from_dialog(dialog_id):
-    try:
-        user_id = get_jwt_identity()
-        dialog = Dialog.query.get(dialog_id)
-        if not dialog:
-            return jsonify({"error": "Dialog not found"}), 404
-
-        if dialog.id_user1 != user_id and dialog.id_user2 != user_id:
-            return jsonify({"error": "You are not a participant in this dialog"}), 403
-
-        dialog.key = None
-        db.session.commit()
-        return jsonify({"message": "Key removed from dialog"}), 200
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
 
 
 @messages_bp.route('/messages/<int:message_id>', methods=['PUT'])
@@ -649,10 +630,6 @@ def mark_messages_as_read(id_dialog):
 @jwt_required()
 def search_messages_in_dialog(dialog_id):
     user_id = get_jwt_identity()
-    search_text = request.args.get('q', '')
-
-    if not search_text:
-        return jsonify({"error": "Search text must be provided"}), 400
 
     dialog = Dialog.query.get(dialog_id)
     if not dialog:
@@ -664,10 +641,9 @@ def search_messages_in_dialog(dialog_id):
     # Определяем имя таблицы с сообщениями для данного диалога
     table_name = f'messages_dialog_{dialog_id}'
 
-    # Полнотекстовый поиск по партицированной таблице сообщений
-    search_text = ' & '.join([f'{word}:*' for word in search_text.split()])
-    search_query = text(f"SELECT * FROM {table_name} WHERE to_tsvector('simple', text) @@ to_tsquery('simple', :search_text)")
-    messages = db.session.execute(search_query, {'search_text': search_text}).mappings().all()
+    # Получаем все сообщения из таблицы, кроме тех, где text == None
+    query = text(f"SELECT * FROM {table_name} WHERE text IS NOT NULL")
+    messages = db.session.execute(query).mappings().all()
 
     message_list = [
         {
@@ -700,6 +676,8 @@ def get_conversations():
         dialog_list = []
         for dialog in dialogs:
             other_user_id = dialog.id_user1 if dialog.id_user1 != user_id else dialog.id_user2
+            key_dialog = dialog.key_user1 if dialog.id_user1 == user_id else dialog.key_user2
+            is_owner = True if dialog.id_user1 == user_id else False
             other_user = User.query.get(other_user_id)
             query = text(f"SELECT text, timestamp, is_read FROM messages_dialog_{dialog.id} ORDER BY timestamp DESC LIMIT 1")
             last_message = db.session.execute(query).mappings().first()
@@ -707,7 +685,7 @@ def get_conversations():
             dialog_data = {
                 "type": "dialog",
                 "id": dialog.id,
-                "key": dialog.key,
+                "key": key_dialog,
                 "other_user": {
                     "id": other_user.id,
                     "name": other_user.name,
@@ -720,6 +698,7 @@ def get_conversations():
                     "is_read": last_message['is_read'] if last_message else None
                 },
                 "count_msg": dialog.count_msg,
+                "is_owner": is_owner,
                 "can_delete": dialog.can_delete,
                 "auto_delete_interval": dialog.auto_delete_interval
             }
@@ -728,17 +707,18 @@ def get_conversations():
         # Получение групп
         group_memberships = GroupMember.query.filter_by(user_id=user_id).all()
         group_ids = [membership.group_id for membership in group_memberships]
-
+        key_dict = {membership.group_id: membership.key for membership in group_memberships}
         groups = Group.query.filter(Group.id.in_(group_ids)).all()
 
         group_list = []
         for group in groups:
             query = text(f"SELECT text, timestamp, is_read FROM messages_group_{group.id} ORDER BY timestamp DESC LIMIT 1")
             last_message = db.session.execute(query).mappings().first()
+            is_owner = True if group.created_by == user_id else False
             group_data = {
                 "type": "group",
                 "id": group.id,
-                "key": group.key,
+                "key": key_dict.get(group.id),
                 "name": group.name,
                 "created_by": group.created_by,
                 "avatar": group.avatar,
@@ -748,6 +728,7 @@ def get_conversations():
                     "is_read": last_message['is_read'] if last_message else None
                 },
                 "count_msg": group.count_msg,
+                "is_owner": is_owner,
                 "can_delete": group.can_delete,
                 "auto_delete_interval": group.auto_delete_interval
             }
@@ -755,7 +736,7 @@ def get_conversations():
 
         # Объединение и сортировка диалогов и групп по времени последнего сообщения
         conversations = dialog_list + group_list
-        sorted_conversations = sorted(conversations, key=lambda x: x['last_message']['timestamp'].astimezone(timezone(timedelta(hours=3))) if x['last_message']['timestamp'] else 0, reverse=True)
+        sorted_conversations = sorted(conversations, key=lambda x: x['last_message']['timestamp'].astimezone(timezone(timedelta(hours=3))) if x['last_message']['timestamp'] else datetime.max.replace(tzinfo=timezone(timedelta(hours=3))), reverse=True)
 
         return jsonify(sorted_conversations), 200
     except Exception as e:
@@ -868,27 +849,6 @@ def delete_dialog_messages(dialog_id):
         return jsonify({"error": str(e)}), 500
 
 
-@messages_bp.route('/dialog/<int:dialog_id>/settings', methods=['GET'])
-@jwt_required()
-def get_dialog_settings(dialog_id):
-    user_id = get_jwt_identity()
-    try:
-        dialog = Dialog.query.filter(
-            ((Dialog.id_user1 == user_id) | (Dialog.id_user2 == user_id)) &
-            (Dialog.id == dialog_id)
-        ).first()
-
-        if not dialog:
-            return jsonify({"error": "Dialog not found or user not a participant"}), 404
-
-        return jsonify({
-            "can_delete": dialog.can_delete,
-            "auto_delete_interval": dialog.auto_delete_interval
-        }), 200
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
 @socketio.on('typing')
 def handle_typing_event(data):
     """
@@ -969,6 +929,7 @@ def handle_join_dialog(data):
         if dialog_id:
             # Присоединяем пользователя к комнате, соответствующей диалогу
             join_room(f'dialog_{dialog_id}')
+            active_dialogs[user_id] = dialog_id
             emit('user_joined', {'dialog_id': dialog_id, 'user_id': user_id}, room=f'dialog_{dialog_id}', skip_sid=request.sid)
             logger.info(f"Joined Dialog ID: {dialog_id}")
     except ExpiredSignatureError:
@@ -1004,6 +965,8 @@ def handle_leave_dialog(data):
 
         if dialog_id:
             leave_room(f'dialog_{dialog_id}')
+            if active_dialogs.get(user_id) == dialog_id:
+                active_dialogs.pop(user_id)
             emit('user_left', {'dialog_id': dialog_id, 'user_id': user_id}, room=f'dialog_{dialog_id}', skip_sid=request.sid)
     except Exception as e:
         logger.info(f"Invalid token: {e}")

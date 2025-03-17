@@ -1,5 +1,3 @@
-from PIL import Image
-import ffmpeg
 import os
 import uuid
 from flask import Blueprint, request, jsonify, send_from_directory, current_app
@@ -82,12 +80,11 @@ def save_file(file, dialog_id, folder, allowed_extensions, is_group=0):
     return None
 
 
-def save_file_with_preview(file, dialog_id, folder, allowed_extensions, is_video, is_group=0):
+def save_photo(file, dialog_id, folder, allowed_extensions, is_group=0):
     if file and allowed_file(file.filename, allowed_extensions):
         f = is_group == 1
         partitioned_original_path = create_partitioned_path(dialog_id, folder, 'original', f)
         unique_filename = generate_unique_filename(partitioned_original_path, file.filename)
-        partitioned_preview_path = create_partitioned_path(dialog_id, folder, 'preview', f)
 
         # Путь для оригинального файла
         original_file_path = os.path.join(partitioned_original_path, unique_filename)
@@ -95,65 +92,21 @@ def save_file_with_preview(file, dialog_id, folder, allowed_extensions, is_video
         # Сохраняем оригинальный файл
         file.save(original_file_path)
 
-        # Генерация превью
-        if is_video:
-            create_video_preview(original_file_path, partitioned_preview_path, unique_filename)
-        else:
-            create_image_preview(original_file_path, partitioned_preview_path, unique_filename)
-
         return unique_filename
     return None
 
 
-def create_image_preview(original_file_path, preview_path, filename):
-    try:
-        # Открываем изображение и уменьшаем его размер для превью
-        with Image.open(original_file_path) as img:
-            img.thumbnail((300, 300))  # Пример уменьшения до 300x300
-            preview_file_path = os.path.join(preview_path, filename)
-            img.save(preview_file_path, "JPEG")
-        return filename
-    except Exception as e:
-        print(f"Error creating image preview: {e}")
-        return None
+def save_preview(file, dialog_id, folder, is_group=0):
+    if file:
+        f = is_group == 1
+        partitioned_preview_path = create_partitioned_path(dialog_id, folder, 'preview', f)
+        unique_filename = generate_unique_filename(partitioned_preview_path, file.filename)
 
+        # Путь для превью
+        preview_file_path = os.path.join(partitioned_preview_path, unique_filename)
 
-def create_video_preview(original_file_path, preview_path, filename):
-    try:
-        duration = get_video_duration(original_file_path)
-        if duration is None:
-            logger.info("Could not retrieve duration")
-            return None
-
-        # Получаем расширение видео
-        video_extension = os.path.splitext(filename)[1][1:]  # например, "mp4" без точки
-
-        # Формируем название превью с продолжительностью и форматом
-        preview_filename = f"{filename.rsplit('.', 1)[0]}_{duration}s:{video_extension}.jpg"
-        preview_file_path = os.path.join(preview_path, preview_filename)
-        (
-            ffmpeg
-            .input(original_file_path, ss=0)  # Кадр на 0 секунде
-            .output(preview_file_path, vframes=1, format='image2', vcodec='mjpeg', qscale=5)  # Уменьшаем качество
-            .run(capture_stdout=True, capture_stderr=True)
-        )
-        
-        return preview_filename
-    except Exception as e:
-        logger.info(f"Error creating video preview: {e}")
-        return None
-
-
-def get_video_duration(file_path):
-    try:
-        # Используем ffmpeg.probe для получения метаданных видео
-        probe = ffmpeg.probe(file_path)
-        # Длительность хранится в секундах в формате float
-        duration = float(probe['format']['duration'])
-        return int(duration)
-    except Exception as e:
-        logger.info(f"Error getting video duration: {e}")
-        return None
+        # Сохраняем превью
+        file.save(preview_file_path)
 
 
 def save_avatar(file, allowed_extensions):
@@ -196,17 +149,27 @@ def upload_photo(dialog_id, is_group=0):
 
     if not file or not dialog_id:
         return jsonify({'error': 'No file or dialog_id provided'}), 400
-
-    # Определяем тип файла (фото или видео)
-    file_extension = file.filename.rsplit('.', 1)[-1].lower()
-    is_video = file_extension in ALLOWED_VIDEO_EXTENSIONS
     
-    filename = save_file_with_preview(file, dialog_id, 'PHOTOS', ALLOWED_PHOTO_EXTENSIONS, is_video, is_group)
+    filename = save_photo(file, dialog_id, 'PHOTOS', ALLOWED_PHOTO_EXTENSIONS, is_group)
     
     if not filename:
         return jsonify({'error': 'Invalid file type'}), 400
 
     return jsonify({'filename': filename}), 201
+
+
+@uploads_bp.route('/upload/photo/preview/<int:dialog_id>/<int:is_group>', methods=['POST'])
+@jwt_required()
+def upload_photo_preview(dialog_id, is_group=0):
+    file = request.files.get('file')
+
+    if not file or not dialog_id:
+        return jsonify({'error': 'No file or dialog_id provided'}), 400
+
+    # Сохраняем превью
+    save_preview(file, dialog_id, 'PHOTOS', is_group)
+
+    return jsonify({'message': 'Preview uploaded successfully'}), 201
 
 
 @uploads_bp.route('/upload/audio/<int:dialog_id>/<int:is_group>', methods=['POST'])
