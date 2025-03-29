@@ -7,12 +7,11 @@ from app import logger
 uploads_bp = Blueprint('uploads', __name__)
 
 ALLOWED_ONLY_PHOTO_EXTENSIONS = {'jpg', 'jpeg', 'png'}
-ALLOWED_PHOTO_EXTENSIONS = {'jpg', 'jpeg', 'png', 'gif', 'mp4', 'avi', 'mpeg', 'mov', 'mkv'} # photo+video
+ALLOWED_PHOTO_EXTENSIONS = {'jpg', 'jpeg', 'png', 'gif', 'mp4', 'avi', 'mpeg', 'mov', 'mkv', 'webp'} # photo+video
 ALLOWED_AUDIO_EXTENSIONS = {'mp3', 'wav', 'ogg', 'pcm'}
-ALLOWED_FILE_EXTENSIONS = {'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx'}
+ALLOWED_FILE_EXTENSIONS = {'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx'} | ALLOWED_PHOTO_EXTENSIONS
 ALLOWED_VIDEO_EXTENSIONS = {'mp4', 'avi', 'mov', 'mkv', 'mpeg'}
-all_extensions = ALLOWED_PHOTO_EXTENSIONS | ALLOWED_FILE_EXTENSIONS | ALLOWED_AUDIO_EXTENSIONS
-
+all_extensions = ALLOWED_FILE_EXTENSIONS | ALLOWED_AUDIO_EXTENSIONS
 
 
 def allowed_file(filename, allowed_extensions):
@@ -100,7 +99,8 @@ def save_preview(file, dialog_id, folder, is_group=0):
     if file:
         f = is_group == 1
         partitioned_preview_path = create_partitioned_path(dialog_id, folder, 'preview', f)
-        unique_filename = generate_unique_filename(partitioned_preview_path, file.filename)
+        filename_cut = file.filename.removeprefix('preview_')
+        unique_filename = generate_unique_filename(partitioned_preview_path, filename_cut)
 
         # Путь для превью
         preview_file_path = os.path.join(partitioned_preview_path, unique_filename)

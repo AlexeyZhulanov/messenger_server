@@ -2,7 +2,7 @@ from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity, decode_token
 from flask_socketio import emit, join_room, leave_room, disconnect
 from models import (db, Dialog, User, Group, GroupMember, Log, increment_message_count,
-                    decrement_message_count, create_message_table)
+                    decrement_message_count, create_message_table, get_unread_group_messages_count, do_zero_message_count)
 from .uploads import delete_file_from_disk
 from app import socketio, logger, dramatiq, app
 from fcm import send_push_wakeup
@@ -551,6 +551,9 @@ def delete_messages_task(message_ids, dialog_id):
             db.session.commit()
 
             logger.info(f"Sending WebSocket message to room dialog_{dialog_id} with deleted message ids: {message_ids}")
+            
+            decrement_message_count(dialog_id=dialog_id, count=len(message_ids))
+
             # Уведомление через WebSocket
             socketio.emit('messages_deleted', {
                 'deleted_message_ids': message_ids
@@ -579,20 +582,20 @@ def mark_messages_as_read(id_dialog):
         if not dialog or (dialog.id_user1 != user_id and dialog.id_user2 != user_id):
             return jsonify({"error": "Unauthorized to mark these messages as read"}), 403
 
-        ids_final = []
         table_name = f'messages_dialog_{id_dialog}'
-        for message_id in message_ids:
-            # Получаем сообщение из партицированной таблицы
-            select_message_query = text(f'SELECT id, id_sender FROM {table_name} WHERE id = :message_id')
-            message = db.session.execute(select_message_query, {'message_id': message_id}).mappings().first()
-            if message and message['id_sender'] != user_id:
-                ids_final.append(message_id)
+        max_message_id = max(message_ids)
 
-        if not ids_final:
+        select_unread_messages_query = text(f"""
+            SELECT id FROM {table_name}
+            WHERE id <= :max_message_id AND is_read = FALSE;
+        """)
+        unread_messages = db.session.execute(select_unread_messages_query, {'max_message_id': max_message_id}).scalars().all()
+        
+        if not unread_messages:
             return jsonify({"error": "Messages not found"}), 404
 
         # Обновляем статус "прочитано" для каждого сообщения
-        for message_id in ids_final:
+        for message_id in unread_messages:
             update_read_status_query = text(f'UPDATE {table_name} SET is_read = True WHERE id = :message_id')
             db.session.execute(update_read_status_query, {'message_id': message_id})
 
@@ -611,13 +614,13 @@ def mark_messages_as_read(id_dialog):
 
             # Запускаем задачу для автоудаления сообщений
             delete_messages_task.send_with_options(
-                args=[ids_final, dialog.id],
+                args=[unread_messages, id_dialog],
                 delay=delete_interval_seconds * 1000  # Интервал в миллисекундах
             )
 
         # Уведомляем участников через WebSocket
         socketio.emit('messages_read', {
-            'messages_read_ids': ids_final
+            'messages_read_ids': unread_messages
         }, room=f'dialog_{id_dialog}')
 
         return jsonify({"message": "Messages marked as read successfully"}), 200
@@ -681,6 +684,8 @@ def get_conversations():
             other_user = User.query.get(other_user_id)
             query = text(f"SELECT text, timestamp, is_read FROM messages_dialog_{dialog.id} ORDER BY timestamp DESC LIMIT 1")
             last_message = db.session.execute(query).mappings().first()
+            query_unread_count = text(f"SELECT COUNT(*) FROM messages_dialog_{dialog.id} WHERE is_read = FALSE AND id_sender != :user_id")
+            unread_count = db.session.execute(query_unread_count, {'user_id': user_id}).scalar()
 
             dialog_data = {
                 "type": "dialog",
@@ -698,6 +703,7 @@ def get_conversations():
                     "is_read": last_message['is_read'] if last_message else None
                 },
                 "count_msg": dialog.count_msg,
+                "unread_count": unread_count,
                 "is_owner": is_owner,
                 "can_delete": dialog.can_delete,
                 "auto_delete_interval": dialog.auto_delete_interval
@@ -715,6 +721,8 @@ def get_conversations():
             query = text(f"SELECT text, timestamp, is_read FROM messages_group_{group.id} ORDER BY timestamp DESC LIMIT 1")
             last_message = db.session.execute(query).mappings().first()
             is_owner = True if group.created_by == user_id else False
+            unread_count = get_unread_group_messages_count(group.id, user_id)
+
             group_data = {
                 "type": "group",
                 "id": group.id,
@@ -728,6 +736,7 @@ def get_conversations():
                     "is_read": last_message['is_read'] if last_message else None
                 },
                 "count_msg": group.count_msg,
+                "unread_count": unread_count,
                 "is_owner": is_owner,
                 "can_delete": group.can_delete,
                 "auto_delete_interval": group.auto_delete_interval
@@ -836,6 +845,8 @@ def delete_dialog_messages(dialog_id):
         log = Log(id_user=user_id, id_dialog=dialog_id, action="delete_dialog_messages", content="All messages successfully deleted")
         db.session.add(log)
         db.session.commit()
+
+        do_zero_message_count(dialog_id=dialog_id)
 
         # Уведомление участников через WebSocket
         socketio.emit('messages_all_deleted', {}, room=f'dialog_{dialog_id}')

@@ -34,6 +34,20 @@ def decrement_message_count(dialog_id=None, group_id=None, count=1):
             db.session.commit()
 
 
+def do_zero_message_count(dialog_id=None, group_id=None):
+    if dialog_id:
+        dialog = Dialog.query.get(dialog_id)
+        if dialog and dialog.count_msg > 0:
+            dialog.count_msg = 0
+            db.session.commit()
+
+    if group_id:
+        group = Group.query.get(group_id)
+        if group and group.count_msg > 0:
+            group.count_msg = 0
+            db.session.commit()
+
+
 def create_message_table(conv_id, is_group=False):
     table_name = f"messages_group_{conv_id}" if is_group else f"messages_dialog_{conv_id}"
     
@@ -63,9 +77,112 @@ def create_message_table(conv_id, is_group=False):
                 username_author_original TEXT,
                 timestamp TIMESTAMPTZ DEFAULT NOW()
             );
+
+            CREATE INDEX {table_name}_idx_is_read ON {table_name} (is_read);
         ''')
         db.session.execute(create_table_query)
         db.session.commit()
+
+    # Если это группа, создаем таблицу для статусов прочтения
+    if is_group:
+        status_table_name = f"message_read_status_group_{conv_id}"
+        status_table_exists_query = text(f'''
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_name = :table_name
+            );
+        ''')
+        status_table_exists = db.session.execute(status_table_exists_query, {'table_name': status_table_name}).scalar()
+
+        if not status_table_exists:
+            create_status_table_query = text(f'''
+                CREATE TABLE {status_table_name} (
+                    id SERIAL PRIMARY KEY,
+                    message_id INTEGER NOT NULL,
+                    user_id INTEGER NOT NULL,
+                    FOREIGN KEY (message_id) REFERENCES {table_name}(id) ON DELETE CASCADE,
+                    FOREIGN KEY (user_id) REFERENCES public.user(id),
+                    UNIQUE (message_id, user_id)
+                );
+
+                CREATE INDEX {status_table_name}_idx_user_id ON {status_table_name} (user_id);
+                CREATE INDEX {status_table_name}_idx_message_id ON {status_table_name} (message_id);
+            ''')
+            db.session.execute(create_status_table_query)
+            db.session.commit()
+
+
+def get_unread_group_messages_count(group_id, user_id):
+    try:
+        # Имя таблицы для статусов прочтения
+        status_table_name = f"message_read_status_group_{group_id}"
+        
+        # Запрос для подсчета непрочитанных сообщений
+        query = text(f"""
+            SELECT COUNT(*) 
+            FROM {status_table_name} 
+            WHERE user_id = :user_id;
+        """)
+        unread_count = db.session.execute(query, {'user_id': user_id}).scalar()
+        
+        return unread_count or 0
+    except Exception as e:
+        return 0
+
+
+def add_unread_message_for_all_members(group_id, message_id, sender_id):
+    """
+    Добавляет запись о непрочитанном сообщении для всех участников группы, кроме отправителя.
+    """
+    try:
+        status_table_name = f"message_read_status_group_{group_id}"
+        
+        # Получаем всех участников группы, кроме отправителя
+        members = GroupMember.query.filter_by(group_id=group_id).filter(GroupMember.user_id != sender_id).all()
+        
+        if not members:
+            return
+        
+        # Формируем список значений для вставки
+        values = [(message_id, member.user_id) for member in members]
+        
+        # Создаем SQL-запрос для вставки всех записей за один раз
+        query = text(f"""
+            INSERT INTO {status_table_name} (message_id, user_id)
+            VALUES {', '.join(['(:message_id_' + str(i) + ', :user_id_' + str(i) + ')' for i in range(len(values))])};
+        """)
+
+        # Подготавливаем параметры для запроса
+        params = {}
+        for i, (msg_id, user_id) in enumerate(values):
+            params[f'message_id_{i}'] = msg_id
+            params[f'user_id_{i}'] = user_id
+        
+        db.session.execute(query, params)
+        db.session.commit()
+    except Exception as e:
+        print(f"Ошибка при добавлении непрочитанных сообщений: {e}")
+        db.session.rollback()
+
+
+def delete_unread_status_for_messages(group_id, message_ids):
+    """
+    Удаляет записи о непрочитанных сообщениях для указанных ID сообщений.
+    """
+    try:
+        status_table_name = f"message_read_status_group_{group_id}"
+        
+        # Формируем SQL-запрос для удаления записей
+        query = text(f"""
+            DELETE FROM {status_table_name}
+            WHERE message_id IN :message_ids;
+        """)
+        
+        db.session.execute(query, {'message_ids': tuple(message_ids)})
+        db.session.commit()
+    except Exception as e:
+        print(f"Ошибка при удалении записей о непрочитанных сообщениях: {e}")
+        db.session.rollback()
 
 
 class User(db.Model):

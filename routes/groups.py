@@ -1,7 +1,9 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity, decode_token
 from flask_socketio import emit, join_room, leave_room, disconnect
-from models import db, Group, GroupMember, User, Log, increment_message_count, decrement_message_count, create_message_table
+from models import (db, Group, GroupMember, User, Log, increment_message_count, decrement_message_count, 
+                    create_message_table, add_unread_message_for_all_members, 
+                    delete_unread_status_for_messages, do_zero_message_count)
 from .uploads import delete_file_from_disk, delete_avatar_file_if_exists
 from app import socketio, logger, dramatiq, app
 from fcm import send_push_wakeup
@@ -100,9 +102,11 @@ def send_group_message(group_id):
         })
         db.session.commit()
 
-        increment_message_count(group_id=group.id)
+        increment_message_count(group_id=group_id)
 
         message_id, timestamp = result.fetchone()
+
+        add_unread_message_for_all_members(group_id, message_id, user_id)
 
         socketio.emit('new_message', {
             'id': message_id,
@@ -189,6 +193,13 @@ def get_group_messages(group_id):
         if not messages:
             return jsonify([]), 200
 
+        unread_message_ids = set()
+        if page == 0: # start page
+            status_table_name = f"message_read_status_group_{group_id}"
+            unread_query = text(f"SELECT message_id FROM {status_table_name} WHERE user_id = :user_id;")
+            unread_messages = db.session.execute(unread_query, {'user_id': user_id}).scalars().all()
+            unread_message_ids = set(unread_messages)
+
         messages_data = [
             {
                 "id": msg['id'],
@@ -199,6 +210,7 @@ def get_group_messages(group_id):
                 "file": msg['file'],
                 "is_edited": msg['is_edited'],
                 "is_read": msg['is_read'],
+                "is_personal_unread": msg['id'] in unread_message_ids,
                 "is_forwarded": msg['is_forwarded'],
                 "reference_to_message_id": msg['reference_to_message_id'],
                 "username_author_original": msg['username_author_original'],
@@ -403,6 +415,8 @@ def delete_group_messages(group_id):
 
         decrement_message_count(group_id=group_id, count=len(messages))
 
+        delete_unread_status_for_messages(group_id, message_ids)
+
         db.session.commit()
 
         # Уведомляем участников через WebSocket
@@ -458,6 +472,12 @@ def delete_group(group_id):
 
         log = Log(id_user=user_id, id_group=group_id, action="delete_group", content="Group successfully deleted")
         db.session.add(log)
+        db.session.commit()
+
+        status_table_name = f"message_read_status_group_{group_id}"
+        # Формируем SQL-запрос для удаления таблицы
+        query = text(f"DROP TABLE IF EXISTS {status_table_name};")
+        db.session.execute(query)
         db.session.commit()
 
         # Уведомляем участников через WebSocket
@@ -644,6 +664,10 @@ def delete_messages_task(message_ids, group_id):
             db.session.execute(delete_messages_query, {'message_ids': tuple(message_ids)})
             db.session.commit()
 
+            decrement_message_count(group_id=group_id, count=len(message_ids))
+
+            delete_unread_status_for_messages(group_id, message_ids)
+
             logger.info(f"Sending WebSocket message to room group_{group_id} with deleted message ids: {message_ids}")
             # Уведомление через WebSocket
             socketio.emit('messages_deleted', {
@@ -676,46 +700,53 @@ def mark_group_messages_as_read(group_id):
         if not GroupMember.query.filter_by(group_id=group_id, user_id=user_id).first():
             return jsonify({"error": "You are not a member of this group"}), 403
         
-        ids_final = []
         table_name = f'messages_group_{group_id}'
-        for message_id in message_ids:
-            # Получаем сообщение из партицированной таблицы
-            select_message_query = text(f'SELECT id, id_sender FROM {table_name} WHERE id = :message_id')
-            message = db.session.execute(select_message_query, {'message_id': message_id}).mappings().first()
-            if message and message['id_sender'] != user_id:
-                ids_final.append(message_id)
-
-        if not ids_final:
-            return jsonify({"error": "Messages not found"}), 404
-
+        max_message_id = max(message_ids)
+        
+        select_unread_messages_query = text(f"""
+            SELECT id FROM {table_name}
+            WHERE id <= :max_message_id AND is_read = FALSE;
+        """)
+        unread_messages = db.session.execute(select_unread_messages_query, {'max_message_id': max_message_id}).scalars().all()
+        
         # Обновляем статус "прочитано" для каждого сообщения
-        for message_id in ids_final:
+        for message_id in unread_messages:
             update_read_status_query = text(f'UPDATE {table_name} SET is_read = True WHERE id = :message_id')
             db.session.execute(update_read_status_query, {'message_id': message_id})
 
+        status_table_name = f'message_read_status_group_{group_id}'
+
+        # Удаляем записи о непрочитанных сообщениях для текущего пользователя
+        delete_unread_status_query = text(f"""
+            DELETE FROM {status_table_name}
+            WHERE user_id = :user_id AND message_id <= :max_message_id;
+        """)
+        db.session.execute(delete_unread_status_query, {'user_id': user_id, 'max_message_id': max_message_id})
+
         db.session.commit()
 
-        # Проверяем, установлен ли интервал автоудаления сообщений
-        if group.auto_delete_interval > 0:
-            # Конвертируем интервал автоудаления в секунды
-            delete_interval_seconds = group.auto_delete_interval
+        if unread_messages:
+            # Проверяем, установлен ли интервал автоудаления сообщений
+            if group.auto_delete_interval > 0:
+                # Конвертируем интервал автоудаления в секунды
+                delete_interval_seconds = group.auto_delete_interval
 
-            # Логируем время, через которое будет выполнено удаление
-            if delete_interval_seconds >= 60:
-                logger.info(f"Удаление сообщений будет запланировано через {delete_interval_seconds // 60} минут.")
-            else:
-                logger.info(f"Удаление сообщений будет запланировано через {delete_interval_seconds} секунд.")
+                # Логируем время, через которое будет выполнено удаление
+                if delete_interval_seconds >= 60:
+                    logger.info(f"Удаление сообщений будет запланировано через {delete_interval_seconds // 60} минут.")
+                else:
+                    logger.info(f"Удаление сообщений будет запланировано через {delete_interval_seconds} секунд.")
 
-            # Запускаем задачу для автоудаления сообщений
-            delete_messages_task.send_with_options(
-                args=[ids_final, group.id],
-                delay=delete_interval_seconds * 1000  # Интервал в миллисекундах
-            )
+                # Запускаем задачу для автоудаления сообщений
+                delete_messages_task.send_with_options(
+                    args=[unread_messages, group.id],
+                    delay=delete_interval_seconds * 1000  # Интервал в миллисекундах
+                )
 
-        # Уведомляем участников через WebSocket
-        socketio.emit('messages_read', {
-            'messages_read_ids': ids_final
-        }, room=f'group_{group_id}')
+            # Уведомляем участников через WebSocket
+            socketio.emit('messages_read', {
+                'messages_read_ids': unread_messages
+            }, room=f'group_{group_id}')
 
         return jsonify({"message": "Group messages marked as read"}), 200
     except Exception as e:
@@ -795,6 +826,14 @@ def delete_group_messages_all(group_id):
 
         log = Log(id_user=user_id, id_group=group_id, action="delete_group_messages", content="All messages successfully deleted")
         db.session.add(log)
+        db.session.commit()
+
+        do_zero_message_count(group_id=group_id)
+
+        status_table_name = f"message_read_status_group_{group_id}"
+        # Формируем SQL-запрос для очистки таблицы
+        query = text(f"TRUNCATE TABLE {status_table_name};")
+        db.session.execute(query)
         db.session.commit()
 
         # Уведомление участников через WebSocket
