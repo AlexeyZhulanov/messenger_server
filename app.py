@@ -43,6 +43,7 @@ def create_app():
     from routes.uploads import uploads_bp
     from routes.logs import logs_bp
     from routes.news import news_bp
+    from routes.gitlab import gitlab_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(messages_bp)
@@ -50,6 +51,7 @@ def create_app():
     app.register_blueprint(uploads_bp)
     app.register_blueprint(logs_bp)
     app.register_blueprint(news_bp)
+    app.register_blueprint(gitlab_bp)
 
     return app
 

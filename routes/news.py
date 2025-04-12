@@ -3,7 +3,7 @@ from flask_jwt_extended import jwt_required, get_jwt_identity
 from models import db, User, Log, News, NewsKeys
 from .uploads import delete_news_file_if_exists
 from app import socketio
-from fcm import send_push_wakeups
+from fcm import send_push_wakeup
 
 news_bp = Blueprint('news', __name__)
 
@@ -56,8 +56,9 @@ def send_news():
         # FCM
         offline_users = User.query.filter(User.fcm_token.isnot(None)).all()
         offline_tokens = [user.fcm_token for user in offline_users if f"user_{user.id}" not in socketio.server.manager.rooms["/"]]
-        if offline_tokens:
-            send_push_wakeups(offline_tokens)
+        for offline_token in offline_tokens:
+            if offline_token:
+                send_push_wakeup(offline_token)
 
         return jsonify({"message": "News post sent successfully"}), 201
     

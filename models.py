@@ -70,9 +70,12 @@ def create_message_table(conv_id, is_group=False):
                 images TEXT[],
                 voice TEXT,
                 file TEXT,
+                code TEXT,
+                code_language TEXT,
                 is_edited BOOLEAN DEFAULT FALSE,
                 is_forwarded BOOLEAN DEFAULT FALSE,
                 is_read BOOLEAN DEFAULT FALSE,
+                is_url BOOLEAN DEFAULT FALSE,
                 reference_to_message_id INTEGER,
                 username_author_original TEXT,
                 timestamp TIMESTAMPTZ DEFAULT NOW()
@@ -199,10 +202,6 @@ class User(db.Model):
     public_key = db.Column(db.Text)
     encrypted_private_key = db.Column(db.Text)
 
-    dialogs_as_user1 = db.relationship('Dialog', foreign_keys='Dialog.id_user1', backref='user1', lazy=True)
-    dialogs_as_user2 = db.relationship('Dialog', foreign_keys='Dialog.id_user2', backref='user2', lazy=True)
-    groups_created = db.relationship('Group', backref='creator', lazy=True)
-
 
 class Dialog(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -251,6 +250,20 @@ class NewsKeys(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     key = db.Column(db.Text)
+
+
+class GitlabSubs(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    project_id = db.Column(db.Integer, nullable=False)
+    hook_push = db.Column(db.Boolean, default=False)
+    hook_merge = db.Column(db.Boolean, default=False)
+    hook_tag = db.Column(db.Boolean, default=False)
+    hook_issue = db.Column(db.Boolean, default=False)
+    hook_note = db.Column(db.Boolean, default=False)
+    hook_release = db.Column(db.Boolean, default=False)
+
+    user = db.relationship("User", backref="gitlab_subs")
 
 
 class Log(db.Model):

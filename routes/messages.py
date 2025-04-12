@@ -78,9 +78,12 @@ def send_message(id_dialog):
         data = request.get_json()
         id_sender = get_jwt_identity()
         text_content = data.get('text')
+        is_url = data.get('is_url')
         images = data.get('images')
         voice = data.get('voice')
         file = data.get('file')
+        code = data.get('code')
+        code_lang = data.get('code_language')
         reference_to_message_id = data.get('reference_to_message_id')
         is_forwarded = data.get('is_forwarded')
         username_author_original = data.get('username_author_original')
@@ -102,8 +105,8 @@ def send_message(id_dialog):
         # Вставка сообщения в партицированную таблицу
         table_name = f'messages_dialog_{id_dialog}'
         insert_message_query = text(f'''INSERT INTO {table_name} 
-        (id_sender, text, images, voice, file, is_edited, is_forwarded, reference_to_message_id, username_author_original, is_read)
-        VALUES (:id_sender, :text, :images, :voice, :file, :is_edited, :is_forwarded, :reference_to_message_id, :username_author_original, :is_read)
+        (id_sender, text, images, voice, file, code, code_language, is_edited, is_forwarded, is_url, reference_to_message_id, username_author_original, is_read)
+        VALUES (:id_sender, :text, :images, :voice, :file, :code, :code_language, :is_edited, :is_forwarded, :is_url, :reference_to_message_id, :username_author_original, :is_read)
         RETURNING id, timestamp;''')
 
         result = db.session.execute(insert_message_query, {
@@ -112,8 +115,11 @@ def send_message(id_dialog):
             'images': images,
             'voice': voice,
             'file': file,
+            'code': code,
+            'code_language': code_lang,
             'is_edited': False,
             'is_forwarded': is_forwarded,
+            'is_url' : is_url,
             'is_read': False,
             'reference_to_message_id': reference_to_message_id,
             'username_author_original': username_author_original
@@ -131,9 +137,12 @@ def send_message(id_dialog):
             'images': images,
             'voice': voice,
             'file': file,
+            'code': code,
+            'code_language': code_lang,
             'is_edited': False,
             'is_read': False,
             'is_forwarded': is_forwarded,
+            'is_url': is_url,
             'username_author_original': username_author_original,
             'reference_to_message_id': reference_to_message_id,
             'timestamp': int(timestamp.timestamp() * 1000)
@@ -151,6 +160,7 @@ def send_message(id_dialog):
                 'images': images,
                 'voice': voice,
                 'file': file,
+                'code_language': code_lang,
                 'id_sender': id_sender,
                 'sender_name': user.username,
                 'avatar': user.avatar,
@@ -215,9 +225,12 @@ def get_messages(id_dialog):
                 "images": msg['images'],
                 "voice": msg['voice'],
                 "file": msg['file'],
+                "code": msg['code'],
+                "code_language": msg['code_language'],
                 "is_edited": msg['is_edited'],
                 "is_read": msg['is_read'],
                 "is_forwarded": msg['is_forwarded'],
+                "is_url": msg['is_url'],
                 "reference_to_message_id": msg['reference_to_message_id'],
                 "username_author_original": msg['username_author_original'],
                 "timestamp": msg['timestamp']
@@ -268,9 +281,12 @@ def get_message_by_id(message_id):
             "images": message['images'],
             "voice": message['voice'],
             "file": message['file'],
+            "code": message['code'],
+            "code_language": message['code_language'],
             "is_edited": message['is_edited'],
             "is_read": message['is_read'],
             "is_forwarded": message['is_forwarded'],
+            "is_url": message['is_url'],
             "reference_to_message_id": message['reference_to_message_id'],
             "username_author_original": message['username_author_original'],
             "timestamp": message['timestamp'],
@@ -311,8 +327,8 @@ def edit_message(message_id):
         updated = False
 
         if 'text' in data and message['text'] != data['text']:
-            sql_update = text(f"UPDATE {table_name} SET text = :text, is_edited = TRUE WHERE id = :message_id")
-            db.session.execute(sql_update, {'text': data['text'], 'message_id': message_id})
+            sql_update = text(f"UPDATE {table_name} SET text = :text, is_edited = TRUE, is_url = :is_url WHERE id = :message_id")
+            db.session.execute(sql_update, {'text': data['text'], 'is_url': data['is_url'], 'message_id': message_id})
             updated = True
 
         if 'images' in data and message['images'] != data['images']:
@@ -336,6 +352,11 @@ def edit_message(message_id):
             db.session.execute(sql_update, {'voice': data['voice'], 'message_id': message_id})
             updated = True
 
+        if 'code' in data and message['code'] != data['code']:
+            sql_update = text(f"UPDATE {table_name} SET code = :code, code_language = :code_language, is_edited = TRUE WHERE id = :message_id")
+            db.session.execute(sql_update, {'code': data['code'], 'code_language': data.get('code_language', message['code_language']), 'message_id': message_id})
+            updated = True
+
         if updated:
             log = Log(id_user=id_user, id_dialog=id_dialog, action="edit_message", content=f"Message was edited, old message: text: {message.get('text', '')[:150] if message.get('text') else ''}, "
             f"file: {message.get('file', '')[:50] if message.get('file') else ''}")
@@ -350,6 +371,8 @@ def edit_message(message_id):
                 'images': data.get('images', message['images']),
                 'voice': data.get('voice', message['voice']),
                 'file': data.get('file', message['file']),
+                'code': data.get('code', message['code']),
+                'code_language': data.get('code_language', message['code_language']),
                 'is_edited': True,
                 'is_forwarded': data.get('is_forwarded', message['is_forwarded']),
                 'username_author_original': data.get('username_author_original', message['username_author_original']),
@@ -656,8 +679,11 @@ def search_messages_in_dialog(dialog_id):
             "images": message['images'],
             "voice": message['voice'],
             "file": message['file'],
+            "code": message['code'],
+            "code_language": message['code_language'],
             "is_read": message['is_read'],
             "is_edited": message['is_edited'],
+            "is_url": message['is_url'],
             "timestamp": message['timestamp'],
             "reference_to_message_id": message['reference_to_message_id'],
             "is_forwarded": message['is_forwarded'],
