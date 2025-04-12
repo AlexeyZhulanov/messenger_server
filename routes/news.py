@@ -1,6 +1,6 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
-from models import db, User, Log, News, NewsKeys
+from models import db, User, Log, News
 from .uploads import delete_news_file_if_exists
 from app import socketio
 from fcm import send_push_wakeup
@@ -241,10 +241,10 @@ def delete_news(news_id):
 def get_news_key():
     try:
         user_id = get_jwt_identity()
-        news_keys = NewsKeys.query.filter_by(user_id=user_id).first()
-        if not news_keys:
+        user = User.query.get(user_id)
+        if not user.news_key:
             return jsonify({"error": "Key not found"}), 404
         
-        return jsonify({'news_key': news_keys.key}), 200
+        return jsonify({'news_key': user.news_key}), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500

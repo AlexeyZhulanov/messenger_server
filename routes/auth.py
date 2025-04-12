@@ -2,7 +2,7 @@ from flask import Blueprint, request, jsonify
 from flask_jwt_extended import create_access_token, create_refresh_token, jwt_required, get_jwt_identity, decode_token
 from flask_socketio import emit, join_room, disconnect
 from werkzeug.security import generate_password_hash, check_password_hash
-from models import db, User, Log, NewsKeys
+from models import db, User, Log
 from .uploads import delete_avatar_file_if_exists
 from .keys import encrypt_symmetric_key_for_user
 from datetime import datetime, timezone, timedelta
@@ -234,13 +234,9 @@ def save_user_keys():
             return jsonify({'error': 'Invalid key pair'}), 400
         user.public_key = public_key
         user.encrypted_private_key = private_key
-        db.session.commit()
-
         encrypted_symm_key = encrypt_symmetric_key_for_user(public_key)
-        news_keys = NewsKeys(user_id=user_id, key=encrypted_symm_key)
-        db.session.add(news_keys)
+        user.news_key = encrypted_symm_key
         db.session.commit()
-        
         return jsonify({'message': 'Public key updated successfully'}), 200
     
     except Exception as e:

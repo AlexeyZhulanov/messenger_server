@@ -201,6 +201,7 @@ class User(db.Model):
     fcm_token = db.Column(db.String(255), nullable=True)
     public_key = db.Column(db.Text)
     encrypted_private_key = db.Column(db.Text)
+    news_key = db.Column(db.Text)
 
 
 class Dialog(db.Model):
@@ -244,12 +245,6 @@ class News(db.Model):
     is_edited = db.Column(db.Boolean, default=False)
     views_count = db.Column(db.Integer, default=0)
     timestamp = db.Column(db.DateTime, server_default=func.now())
-
-
-class NewsKeys(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
-    key = db.Column(db.Text)
 
 
 class GitlabSubs(db.Model):
