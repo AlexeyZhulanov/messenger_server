@@ -36,7 +36,10 @@ def login():
     try:
         data = request.get_json()
         user = User.query.filter_by(name=data['name']).first()
-        if user and check_password_hash(user.password, data['password']):
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+        
+        if check_password_hash(user.password, data['password']):
             access_token = create_access_token(identity=user.id, expires_delta=timedelta(minutes=60))
             refresh_token = create_refresh_token(identity=user.id, expires_delta=timedelta(days=30))
             return jsonify(access_token=access_token, refresh_token=refresh_token)
