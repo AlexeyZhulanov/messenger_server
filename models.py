@@ -78,6 +78,7 @@ def create_message_table(conv_id, is_group=False):
                 is_url BOOLEAN DEFAULT FALSE,
                 reference_to_message_id INTEGER,
                 username_author_original TEXT,
+                waveform INTEGER[],
                 timestamp TIMESTAMPTZ DEFAULT NOW()
             );
 

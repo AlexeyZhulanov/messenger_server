@@ -71,6 +71,7 @@ def send_group_message(group_id):
         reference_to_message_id = data.get('reference_to_message_id')
         is_forwarded = data.get('is_forwarded')
         username_author_original = data.get('username_author_original')
+        waveform = data.get('waveform')
 
         # Проверка на участие пользователя в группе
         group = Group.query.get(group_id)
@@ -87,8 +88,8 @@ def send_group_message(group_id):
         # Вставка сообщения в партицированную таблицу
         table_name = f'messages_group_{group_id}'
         insert_message_query = text(f'''INSERT INTO {table_name} 
-        (id_sender, text, images, voice, file, code, code_language, is_edited, is_forwarded, is_url, reference_to_message_id, username_author_original, is_read)
-        VALUES (:id_sender, :text, :images, :voice, :file, :code, :code_language, :is_edited, :is_forwarded, :is_url, :reference_to_message_id, :username_author_original, :is_read)
+        (id_sender, text, images, voice, file, code, code_language, is_edited, is_forwarded, is_url, reference_to_message_id, username_author_original, is_read, waveform)
+        VALUES (:id_sender, :text, :images, :voice, :file, :code, :code_language, :is_edited, :is_forwarded, :is_url, :reference_to_message_id, :username_author_original, :is_read, :waveform)
         RETURNING id, timestamp;''')
 
         result = db.session.execute(insert_message_query, {
@@ -104,7 +105,8 @@ def send_group_message(group_id):
             'is_url': is_url,
             'is_read': False,
             'reference_to_message_id': reference_to_message_id,
-            'username_author_original': username_author_original
+            'username_author_original': username_author_original,
+            'waveform': waveform
         })
         db.session.commit()
 
@@ -129,6 +131,7 @@ def send_group_message(group_id):
             'is_url': is_url,
             'username_author_original': username_author_original,
             'reference_to_message_id': reference_to_message_id,
+            'waveform': waveform,
             'timestamp': int(timestamp.timestamp() * 1000)
         }, room=f'group_{group_id}')
 
@@ -227,6 +230,7 @@ def get_group_messages(group_id):
                 "is_url": msg['is_url'],
                 "reference_to_message_id": msg['reference_to_message_id'],
                 "username_author_original": msg['username_author_original'],
+                "waveform": msg['waveform'],
                 "timestamp": msg['timestamp']
             }
             for msg in messages
@@ -283,6 +287,7 @@ def get_message_by_id(message_id):
             "is_url": message['is_url'],
             "reference_to_message_id": message['reference_to_message_id'],
             "username_author_original": message['username_author_original'],
+            "waveform": message['waveform'],
             "timestamp": message['timestamp'],
             "position": message_position
         }
@@ -342,8 +347,8 @@ def edit_group_message(message_id):
         if 'voice' in data and message['voice'] != data['voice']:
             if message['voice']:
                 delete_files_for_message(group_id, message['voice'], 'audio')  # Удаляем старый голосовой файл
-            sql_update = text(f"UPDATE {table_name} SET voice = :voice, is_edited = TRUE WHERE id = :message_id")
-            db.session.execute(sql_update, {'voice': data['voice'], 'message_id': message_id})
+            sql_update = text(f"UPDATE {table_name} SET voice = :voice, waveform = :waveform, is_edited = TRUE WHERE id = :message_id")
+            db.session.execute(sql_update, {'voice': data['voice'], 'waveform': data['waveform'], 'message_id': message_id})
             updated = True
 
         if 'code' in data and message['code'] != data['code']:
@@ -371,6 +376,7 @@ def edit_group_message(message_id):
                 'is_forwarded': data.get('is_forwarded', message['is_forwarded']),
                 'username_author_original': data.get('username_author_original', message['username_author_original']),
                 'reference_to_message_id': data.get('reference_to_message_id', message['reference_to_message_id']),
+                'waveform': data.get('waveform', message['waveform']),
                 'timestamp': int(message['timestamp'].timestamp() * 1000)
             }, room=f'group_{group_id}')
 
@@ -659,7 +665,7 @@ def update_group_avatar(group_id):
 
 
 @dramatiq.actor
-def delete_messages_task(message_ids, group_id):
+def delete_messages_task_group(message_ids, group_id):
     with app.app_context():
         try:
             table_name = f'messages_group_{group_id}'
@@ -761,7 +767,7 @@ def mark_group_messages_as_read(group_id):
                     logger.info(f"Удаление сообщений будет запланировано через {delete_interval_seconds} секунд.")
 
                 # Запускаем задачу для автоудаления сообщений
-                delete_messages_task.send_with_options(
+                delete_messages_task_group.send_with_options(
                     args=[unread_messages, group.id],
                     delay=delete_interval_seconds * 1000  # Интервал в миллисекундах
                 )
@@ -905,7 +911,8 @@ def search_messages_in_group(group_id):
             "timestamp": message['timestamp'],
             "reference_to_message_id": message['reference_to_message_id'],
             "is_forwarded": message['is_forwarded'],
-            "username_author_original": message['username_author_original']
+            "username_author_original": message['username_author_original'],
+            "waveform": message['waveform']
         } for message in messages
     ]
 
