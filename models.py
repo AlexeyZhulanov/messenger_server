@@ -83,6 +83,7 @@ def create_message_table(conv_id, is_group=False):
             );
 
             CREATE INDEX {table_name}_idx_is_read ON {table_name} (is_read);
+            CREATE INDEX {table_name}_idx_msg_timestamp ON {table_name} (timestamp DESC);
         ''')
         db.session.execute(create_table_query)
         db.session.commit()

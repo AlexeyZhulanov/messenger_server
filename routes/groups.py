@@ -9,6 +9,7 @@ from app import socketio, logger, dramatiq, app
 from fcm import send_push_wakeup
 from jwt.exceptions import ExpiredSignatureError
 from sqlalchemy import text
+from datetime import timezone, datetime
 
 
 groups_bp = Blueprint('groups', __name__)
@@ -186,28 +187,56 @@ def get_group_messages(group_id):
             return jsonify({"error": "You are not a member of this group"}), 403
 
         # Пагинация
-        page = request.args.get('page', type=int)
         size = request.args.get('size', type=int)
+        before_ms = request.args.get('before', type=int)
 
-        if page is None or size is None:
-            return jsonify({'error': 'group_id, Page, and size parameters are required'}), 400
+        if size is None:
+            return jsonify({'error': 'group_id and size parameters are required'}), 400
 
-        # Вычисляем границы выборки
-        offset = page * size
-
-        # Имя таблицы сообщений для группы
         table_name = f'messages_group_{group_id}'
 
-        # Получение сообщений с пагинацией
-        get_messages_query = text(f'SELECT * FROM {table_name} ORDER BY timestamp DESC LIMIT :limit OFFSET :offset;')
-        messages = db.session.execute(get_messages_query, {'limit': size, 'offset': offset}).mappings().all()
+        # Если передан курсор
+        if before_ms:
+            try:
+                before_timestamp = datetime.fromtimestamp(before_ms / 1000.0, tz=timezone.utc)
+            except ValueError:
+                return jsonify({'error': 'Invalid before timestamp format'}), 400
+
+            query = text(f'''
+                SELECT *
+                FROM {table_name}
+                WHERE timestamp < :before
+                ORDER BY timestamp DESC
+                LIMIT :limit
+            ''')
+
+            messages = db.session.execute(
+                query,
+                {'before': before_timestamp, 'limit': size}
+            ).mappings().all()
+
+        else:
+            # Первая загрузка (самые новые сообщения)
+            query = text(f'''
+                SELECT *
+                FROM {table_name}
+                ORDER BY timestamp DESC
+                LIMIT :limit
+            ''')
+
+            messages = db.session.execute(
+                query,
+                {'limit': size}
+            ).mappings().all()
+
+        # Разворачиваем в хронологический порядок (старые -> новые)
         messages.reverse()
 
         if not messages:
             return jsonify([]), 200
 
         unread_message_ids = set()
-        if page == 0: # start page
+        if before_ms is None: # start page
             status_table_name = f"message_read_status_group_{group_id}"
             unread_query = text(f"SELECT message_id FROM {status_table_name} WHERE user_id = :user_id;")
             unread_messages = db.session.execute(unread_query, {'user_id': user_id}).scalars().all()
@@ -231,7 +260,7 @@ def get_group_messages(group_id):
                 "reference_to_message_id": msg['reference_to_message_id'],
                 "username_author_original": msg['username_author_original'],
                 "waveform": msg['waveform'],
-                "timestamp": msg['timestamp']
+                "timestamp": int(msg['timestamp'].timestamp() * 1000)
             }
             for msg in messages
         ]
@@ -288,7 +317,7 @@ def get_message_by_id(message_id):
             "reference_to_message_id": message['reference_to_message_id'],
             "username_author_original": message['username_author_original'],
             "waveform": message['waveform'],
-            "timestamp": message['timestamp'],
+            "timestamp": int(message['timestamp'].timestamp() * 1000),
             "position": message_position
         }
 
@@ -908,7 +937,7 @@ def search_messages_in_group(group_id):
             "is_read": message['is_read'],
             "is_edited": message['is_edited'],
             "is_url": message['is_url'],
-            "timestamp": message['timestamp'],
+            "timestamp": int(message['timestamp'].timestamp() * 1000),
             "reference_to_message_id": message['reference_to_message_id'],
             "is_forwarded": message['is_forwarded'],
             "username_author_original": message['username_author_original'],

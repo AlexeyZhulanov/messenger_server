@@ -200,21 +200,49 @@ def get_messages(id_dialog):
             return jsonify({"error": "You are not a participant in this dialog"}), 403
 
         # Пагинация
-        page = request.args.get('page', type=int)
         size = request.args.get('size', type=int)
+        before_ms = request.args.get('before', type=int)
 
-        if page is None or size is None:
-            return jsonify({'error': 'id_dialog, Page, and size parameters are required'}), 400
+        if size is None:
+            return jsonify({'error': 'id_dialog and size parameters are required'}), 400
 
-        # Вычисляем границы выборки
-        offset = page * size
-
-        # Имя таблицы сообщений для диалога
         table_name = f'messages_dialog_{id_dialog}'
 
-        # Получение сообщений с пагинацией
-        get_messages_query = text(f'SELECT * FROM {table_name} ORDER BY timestamp DESC LIMIT :limit OFFSET :offset;')
-        messages = db.session.execute(get_messages_query, {'limit': size, 'offset': offset}).mappings().all()
+        # Если передан курсор
+        if before_ms:
+            try:
+                before_timestamp = datetime.fromtimestamp(before_ms / 1000.0, tz=timezone.utc)
+            except ValueError:
+                return jsonify({'error': 'Invalid before timestamp format'}), 400
+
+            query = text(f'''
+                SELECT *
+                FROM {table_name}
+                WHERE timestamp < :before
+                ORDER BY timestamp DESC
+                LIMIT :limit
+            ''')
+
+            messages = db.session.execute(
+                query,
+                {'before': before_timestamp, 'limit': size}
+            ).mappings().all()
+
+        else:
+            # Первая загрузка (самые новые сообщения)
+            query = text(f'''
+                SELECT *
+                FROM {table_name}
+                ORDER BY timestamp DESC
+                LIMIT :limit
+            ''')
+
+            messages = db.session.execute(
+                query,
+                {'limit': size}
+            ).mappings().all()
+
+        # Разворачиваем в хронологический порядок (старые -> новые)
         messages.reverse()
 
         if not messages:
@@ -237,7 +265,7 @@ def get_messages(id_dialog):
                 "reference_to_message_id": msg['reference_to_message_id'],
                 "username_author_original": msg['username_author_original'],
                 "waveform": msg['waveform'],
-                "timestamp": msg['timestamp']
+                "timestamp": int(msg['timestamp'].timestamp() * 1000)
             }
             for msg in messages
         ]
@@ -294,7 +322,7 @@ def get_message_by_id(message_id):
             "reference_to_message_id": message['reference_to_message_id'],
             "username_author_original": message['username_author_original'],
             "waveform": message['waveform'],
-            "timestamp": message['timestamp'],
+            "timestamp": int(message['timestamp'].timestamp() * 1000),
             "position": message_position
         }
 
@@ -690,7 +718,7 @@ def search_messages_in_dialog(dialog_id):
             "is_read": message['is_read'],
             "is_edited": message['is_edited'],
             "is_url": message['is_url'],
-            "timestamp": message['timestamp'],
+            "timestamp": int(message['timestamp'].timestamp() * 1000),
             "reference_to_message_id": message['reference_to_message_id'],
             "is_forwarded": message['is_forwarded'],
             "username_author_original": message['username_author_original'],
@@ -732,7 +760,7 @@ def get_conversations():
                 },
                 "last_message": {
                     "text": last_message['text'] if last_message else None,
-                    "timestamp": last_message['timestamp'] if last_message else None,
+                    "timestamp": int(last_message['timestamp'].timestamp() * 1000) if last_message else None,
                     "is_read": last_message['is_read'] if last_message else None
                 },
                 "count_msg": dialog.count_msg,
@@ -765,7 +793,7 @@ def get_conversations():
                 "avatar": group.avatar,
                 "last_message": {
                     "text": last_message['text'] if last_message else None,
-                    "timestamp": last_message['timestamp'] if last_message else None,
+                    "timestamp": int(last_message['timestamp'].timestamp() * 1000) if last_message else None,
                     "is_read": last_message['is_read'] if last_message else None
                 },
                 "count_msg": group.count_msg,
