@@ -8,7 +8,7 @@ from app import socketio, logger, dramatiq, app
 from fcm import send_push_wakeup
 from jwt.exceptions import ExpiredSignatureError
 from sqlalchemy import text
-from datetime import timezone, timedelta, datetime
+from datetime import timezone, datetime
 
 
 messages_bp = Blueprint('messages', __name__)
@@ -806,7 +806,7 @@ def get_conversations():
 
         # Объединение и сортировка диалогов и групп по времени последнего сообщения
         conversations = dialog_list + group_list
-        sorted_conversations = sorted(conversations, key=lambda x: x['last_message']['timestamp'].astimezone(timezone(timedelta(hours=3))) if x['last_message']['timestamp'] else datetime.max.replace(tzinfo=timezone(timedelta(hours=3))), reverse=True)
+        sorted_conversations = sorted(conversations, key=lambda x: x['last_message']['timestamp'] if x['last_message']['timestamp'] is not None else 0, reverse=True)
 
         return jsonify(sorted_conversations), 200
     except Exception as e:
