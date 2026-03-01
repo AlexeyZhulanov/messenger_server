@@ -177,7 +177,7 @@ def send_message(id_dialog):
 
             if not is_online:
                 other_user = User.query.get(other_user_id)
-                send_push_wakeup(other_user.fcm_token)
+                socketio.start_background_task(send_push_wakeup, other_user.fcm_token)
 
         return jsonify({"message": "Message sent successfully"}), 201
     except Exception as e:

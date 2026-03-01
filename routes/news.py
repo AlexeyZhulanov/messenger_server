@@ -58,7 +58,7 @@ def send_news():
         offline_tokens = [user.fcm_token for user in offline_users if f"user_{user.id}" not in socketio.server.manager.rooms["/"]]
         for offline_token in offline_tokens:
             if offline_token:
-                send_push_wakeup(offline_token)
+                socketio.start_background_task(send_push_wakeup, offline_token)
 
         return jsonify({"message": "News post sent successfully"}), 201
     

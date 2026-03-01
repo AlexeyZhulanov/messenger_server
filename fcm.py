@@ -18,32 +18,38 @@ def get_access_token():
 
 # Отправка FCM для пробуждения приложения
 def send_push_wakeup(fcm_token):
-    if not fcm_token:
-        return
+    try:
+        if not fcm_token:
+            return
 
-    access_token = get_access_token()
+        access_token = get_access_token()
     
-    headers = {
-        "Authorization": f"Bearer {access_token}",
-        "Content-Type": "application/json"
-    }
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json"
+        }
 
-    payload = {
-        "message": {
-            "token": fcm_token,
-            "data": {
-                "type": "wakeup"  # Просто флаг, который можно обработать на клиенте
+        payload = {
+            "message": {
+                "token": fcm_token,
+                "data": {
+                    "type": "wakeup"  # Просто флаг, который можно обработать на клиенте
+                }
             }
         }
-    }
 
-    response = requests.post(
-        "https://fcm.googleapis.com/v1/projects/XXXXXXXXXXX",
-        json=payload,
-        headers=headers
-    )
+        response = requests.post(
+            "https://fcm.googleapis.com/v1/projects/XXXXXXXXXXXXX/messages:send",
+            json=payload,
+            headers=headers,
+            timeout=5
+        )
     
-    return response.json()
+        if response.status_code != 200:
+            logger.error(f"FCM error: {response.text}")
+
+    except Exception as e:
+        logger.error(f"FCM exception: {e}")
 
 
 # Функция отправки уведомлений с хука

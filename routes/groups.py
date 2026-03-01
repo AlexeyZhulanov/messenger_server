@@ -165,7 +165,7 @@ def send_group_message(group_id):
                 is_online = room_name in socketio.server.manager.rooms.get("/", {})
                 if not is_online:
                     other_user = User.query.get(id)
-                    send_push_wakeup(other_user.fcm_token)
+                    socketio.start_background_task(send_push_wakeup, other_user.fcm_token)
 
         return jsonify({"message": "Message sent successfully"}), 201
     except Exception as e:
