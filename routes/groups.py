@@ -402,6 +402,8 @@ def edit_group_message(message_id):
                 'code': data.get('code', message['code']),
                 'code_language': data.get('code_language', message['code_language']),
                 'is_edited': True,
+                'is_read': message['is_read'],
+                'is_url': data.get('is_url', message['is_url']),
                 'is_forwarded': data.get('is_forwarded', message['is_forwarded']),
                 'username_author_original': data.get('username_author_original', message['username_author_original']),
                 'reference_to_message_id': data.get('reference_to_message_id', message['reference_to_message_id']),
