@@ -704,8 +704,9 @@ def search_messages_in_dialog(dialog_id):
     table_name = f'messages_dialog_{dialog_id}'
 
     # Получаем все сообщения из таблицы, кроме тех, где text == None
-    query = text(f"SELECT * FROM {table_name} WHERE text IS NOT NULL")
+    query = text(f"SELECT * FROM {table_name} WHERE text IS NOT NULL ORDER BY timestamp DESC")
     messages = db.session.execute(query).mappings().all()
+    messages.reverse()
 
     message_list = [
         {
