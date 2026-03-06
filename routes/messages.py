@@ -746,10 +746,11 @@ def get_conversations():
             key_dialog = dialog.key_user1 if dialog.id_user1 == user_id else dialog.key_user2
             is_owner = True if dialog.id_user1 == user_id else False
             other_user = User.query.get(other_user_id)
-            query = text(f"SELECT text, timestamp, is_read FROM messages_dialog_{dialog.id} ORDER BY timestamp DESC LIMIT 1")
+            query = text(f"SELECT text, timestamp, is_read, id_sender FROM messages_dialog_{dialog.id} ORDER BY timestamp DESC LIMIT 1")
             last_message = db.session.execute(query).mappings().first()
             query_unread_count = text(f"SELECT COUNT(*) FROM messages_dialog_{dialog.id} WHERE is_read = FALSE AND id_sender != :user_id")
             unread_count = db.session.execute(query_unread_count, {'user_id': user_id}).scalar()
+            id_sender = last_message['id_sender'] if last_message else None
 
             dialog_data = {
                 "type": "dialog",
@@ -764,7 +765,8 @@ def get_conversations():
                 "last_message": {
                     "text": last_message['text'] if last_message else None,
                     "timestamp": int(last_message['timestamp'].timestamp() * 1000) if last_message else None,
-                    "is_read": last_message['is_read'] if last_message else None
+                    "is_read": last_message['is_read'] if last_message else None,
+                    "sender_name": other_user.username if id_sender == other_user_id else None
                 },
                 "count_msg": dialog.count_msg,
                 "unread_count": unread_count,
@@ -782,10 +784,12 @@ def get_conversations():
 
         group_list = []
         for group in groups:
-            query = text(f"SELECT text, timestamp, is_read FROM messages_group_{group.id} ORDER BY timestamp DESC LIMIT 1")
+            query = text(f"SELECT text, timestamp, is_read, id_sender FROM messages_group_{group.id} ORDER BY timestamp DESC LIMIT 1")
             last_message = db.session.execute(query).mappings().first()
             is_owner = True if group.created_by == user_id else False
             unread_count = get_unread_group_messages_count(group.id, user_id)
+            sender_id = last_message['id_sender'] if last_message else None
+            sender = User.query.get(sender_id) if sender_id else None
 
             group_data = {
                 "type": "group",
@@ -797,7 +801,8 @@ def get_conversations():
                 "last_message": {
                     "text": last_message['text'] if last_message else None,
                     "timestamp": int(last_message['timestamp'].timestamp() * 1000) if last_message else None,
-                    "is_read": last_message['is_read'] if last_message else None
+                    "is_read": last_message['is_read'] if last_message else None,
+                    "sender_name": sender.username if (sender and (sender_id != user_id)) else None
                 },
                 "count_msg": group.count_msg,
                 "unread_count": unread_count,
